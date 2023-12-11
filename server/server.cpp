@@ -10,23 +10,23 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include "threads.h"
-#include "cla_parser.h"
+#include "arg_parser.h"
 #include "syscall_utils.h"
 
 // Global state used by the communication & worker threads
 SharedData data;
 
 static bool get_args(int argc, char *argv[], int* port, int* pool_size) {
-	ClaParser cla_parser(argc, argv);
+	ArgParser arg_parser(argc, argv);
 
-	if (!cla_parser.valid_args()) {
+	if (!arg_parser.valid_args()) {
 		return false;
 	}
 
-	std::string port_ = cla_parser.get_argument(std::string("-p"));
-	std::string pool_size_ = cla_parser.get_argument(std::string("-s"));
-	std::string queue_size_ = cla_parser.get_argument(std::string("-q"));
-	std::string block_size_ = cla_parser.get_argument(std::string("-b"));
+	std::string port_ = arg_parser.get_argument(std::string("-p"));
+	std::string pool_size_ = arg_parser.get_argument(std::string("-s"));
+	std::string queue_size_ = arg_parser.get_argument(std::string("-q"));
+	std::string block_size_ = arg_parser.get_argument(std::string("-b"));
 
 	if (port_.empty() || pool_size_.empty() || queue_size_.empty() || block_size_.empty()) {
 		return false;
