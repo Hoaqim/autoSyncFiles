@@ -1,6 +1,6 @@
 INCS := $(shell find ./ -name '*.h') $(shell find ../utilities/ -name '*.h')
-SRCS := $(shell find ./ -name '*.cc') $(shell find ../utilities/ -name '*.cc')
-OBJS := $(subst .cc,.o,$(SRCS))
+SRCS := $(shell find ./ -name '*.cpp') $(shell find ../utilities/ -name '*.cpp')
+OBJS := $(subst .cpp,.o,$(SRCS))
 
 CXX = g++
 CXXFLAGS = -Wall -O2 -std=c++11 -I../utilities/
