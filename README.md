@@ -29,7 +29,6 @@ cd client
 - [x] Make it automatic:
   - [x] Send files from client to server (use event loop)
   - [x] Compare files from client to files on server and exchange the missing/modified ones with each other
-  - [x] Don't store the files locally on structure (Make a simple struct)
   - [x] D U P A
   - [x] Resolve conflicts - end task
 - [x] Send messages to client - optional
