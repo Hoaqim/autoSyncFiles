@@ -15,6 +15,7 @@
 #include <sys/inotify.h>
 #include <poll.h>
 #include "sys_utill.h"
+#include <fcntl.h>
 
 void copy_directory(Reader& reader, std::string& target_directory);
 void send_files_to_server(int server_socket, int fd){
@@ -43,6 +44,7 @@ void send_files_to_server(int server_socket, int fd){
 		}
 
 		msg = msg_size + msg;
+		printf("%s", msg);
 		write_(1, msg.c_str(), msg.size());
 		}
 }
@@ -71,39 +73,37 @@ void handle_events(int fd, int server_socket){
 			   if (len <= 0) break;
 
 			   /* Loop over all events in the buffer */
-
+				int file;
 			   for (char *ptr = buf; ptr < buf + len;
 					   ptr += sizeof(struct inotify_event) + event->len) {
 
 				   event = (const struct inotify_event *) ptr;
 				   
-				   if (event -> mask & IN_MODIFY) {
-						printf("FILE MODIFIED: ");
-						send_files_to_server(server_socket, fd);
+				   if ( event->mask & IN_MODIFY) {
+						printf("FILE MODIFIED: %s \n", event->name);
+						send_files_to_server(server_socket, open((event->name).c_str(), O_RDONLY));
 				   }
 			        
-					if (event -> mask & IN_CREATE){
+					if (event->mask & IN_CREATE){
 						if(event->mask & IN_ISDIR){
-							printf("DIR CREATED");
+							printf("DIR CREATED\n");
 						}else{	
-							printf("FILE CREATED");
+							printf("FILE CREATED\n");
 						}
 					}
 
-					if (event -> mask & IN_DELETE){
-						if (event-> mask & IN_ISDIR){
-							printf("rm -rf dir");
+					if (event->mask & IN_DELETE){
+						if (event->mask & IN_ISDIR){
+							printf("rm -rf dir\n");
 						}
 					}
 
-					if (event -> mask & IN_MOVE){
-						if (event -> mask & IN_ISDIR){
-							printf("MOVE DIR WITH EVERYTHING SOMEWHERE");
+					if (event->mask & IN_MOVE){
+						if (event->mask & IN_ISDIR){
+							printf("MOVE DIR WITH EVERYTHING SOMEWHERE\n");
 						}
 					}
 
-				   if (event->len)
-					   printf("%s", event->name);
 			   }
 		   }
 	   }
@@ -153,7 +153,7 @@ int main(int argc, char* argv[]) {
 		exit(EXIT_FAILURE);
 	}
 
-	inotify_add_watch(fd, client_dir.c_str(), IN_CLOSE_WRITE | IN_CLOSE_NOWRITE);
+	inotify_add_watch(fd, client_dir.c_str(), IN_MODIFY | IN_CREATE | IN_DELETE | IN_MOVE | IN_CLOSE_WRITE);
 
 	std::cerr << "\n"
 			  << "Client's parameters are:\n\n"
