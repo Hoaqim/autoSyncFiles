@@ -17,9 +17,23 @@
 #include "sys_utill.h"
 #include <fcntl.h>
 
+#include <filesystem>
+
+namespace fs = std::filesystem;
+
+std::string findFilePath(const std::string& fileName) {
+    for (const auto& entry : fs::recursive_directory_iterator("/")) {
+        if (entry.is_regular_file() && entry.path().filename() == fileName) {
+            return entry.path().string();
+        }
+    }
+    return ""; // File not found
+}
+
 void copy_directory(Reader& reader, std::string& target_directory);
 void send_files_to_server(int server_socket, int fd){
 		Reader reader(fd);
+
 		for (int ch, nread; true; ) {
 		std::string msg = "";
 		nread = 0;
@@ -45,7 +59,7 @@ void send_files_to_server(int server_socket, int fd){
 
 		msg = msg_size + msg;
 		printf("%s", msg);
-		write_(1, msg.c_str(), msg.size());
+		write_(server_socket, msg.c_str(), msg.size());
 		}
 }
 
@@ -79,9 +93,10 @@ void handle_events(int fd, int server_socket){
 
 				   event = (const struct inotify_event *) ptr;
 				   
+				   
 				   if ( event->mask & IN_MODIFY) {
 						printf("FILE MODIFIED: %s \n", event->name);
-						send_files_to_server(server_socket, open((event->name).c_str(), O_RDONLY));
+						send_files_to_server(server_socket, open("start_folder/f.txt", O_RDONLY));
 				   }
 			        
 					if (event->mask & IN_CREATE){
