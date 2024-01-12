@@ -16,13 +16,13 @@
 #include <poll.h>
 #include "sys_utill.h"
 #include <fcntl.h>
-
 #include <filesystem>
+#include <dirent.h>
 
 namespace fs = std::filesystem;
 
 std::string findFilePath(const std::string& fileName) {
-    for (const auto& entry : fs::recursive_directory_iterator("/")) {
+    for (const auto& entry : fs::recursive_directory_iterator("./")) {
         if (entry.is_regular_file() && entry.path().filename() == fileName) {
             return entry.path().string();
         }
@@ -31,11 +31,29 @@ std::string findFilePath(const std::string& fileName) {
 }
 
 void copy_directory(Reader& reader, std::string& target_directory);
-void send_files_to_server(int server_socket, int fd){
+void send_files_to_server(int server_socket, std::string filename, bool to_delete = false, bool to_create=false){
+		
+		int fd =open(findFilePath(filename).c_str(), O_RDONLY);
+
 		Reader reader(fd);
+		std::string msg_size = "";
+		std::string msg = "";
+		if(to_delete) {
+			msg = filename + "deleted";
+			msg_size = sizeof(filename) + sizeof("deleted");
+			write_(server_socket, msg.c_str(), msg.size());
+			return;
+		}
+
+		if(to_create){
+			msg = filename + "created";
+			msg_size = sizeof(filename) + sizeof("created");
+			write_(server_socket, msg.c_str(), msg.size());
+			return;
+		}
 
 		for (int ch, nread; true; ) {
-		std::string msg = "";
+		
 		nread = 0;
 
 		while (nread < 128) {
@@ -52,15 +70,28 @@ void send_files_to_server(int server_socket, int fd){
 			break;
 		}
 
-		std::string msg_size = "";
 		for (int i = 0; i < 4; i++) {
 			msg_size += (char) (nread >> (i * 8)) & 0xFF;
 		}
-
+		
 		msg = msg_size + msg;
-		printf("%s", msg);
+
 		write_(server_socket, msg.c_str(), msg.size());
 		}
+}
+
+void send_dir_to_server(int server_socket, std::string dir_name, bool to_delete=false){
+	std::string msg = "", msg_size = "";
+	msg_size = dir_name.size();
+	
+	if(to_delete){
+		msg += "deleted";
+		msg_size += sizeof("deleted");
+	};
+	
+	msg = msg_size + dir_name;
+
+	write_(server_socket, msg.c_str(), msg.size());
 }
 
 void handle_events(int fd, int server_socket){
@@ -87,7 +118,6 @@ void handle_events(int fd, int server_socket){
 			   if (len <= 0) break;
 
 			   /* Loop over all events in the buffer */
-				int file;
 			   for (char *ptr = buf; ptr < buf + len;
 					   ptr += sizeof(struct inotify_event) + event->len) {
 
@@ -96,26 +126,33 @@ void handle_events(int fd, int server_socket){
 				   
 				   if ( event->mask & IN_MODIFY) {
 						printf("FILE MODIFIED: %s \n", event->name);
-						send_files_to_server(server_socket, open("start_folder/f.txt", O_RDONLY));
+						send_files_to_server(server_socket, event->name);
 				   }
 			        
 					if (event->mask & IN_CREATE){
 						if(event->mask & IN_ISDIR){
-							printf("DIR CREATED\n");
-						}else{	
-							printf("FILE CREATED\n");
+							printf("DIR CREATED: %s\n", event->name);
+							send_dir_to_server(server_socket, event->name);
+						}else{
+							printf("FILE CREATED: %s\n", event->name);
+							send_files_to_server(server_socket, event->name, false, true);
 						}
 					}
 
 					if (event->mask & IN_DELETE){
 						if (event->mask & IN_ISDIR){
-							printf("rm -rf dir\n");
+							printf("rm -rf dir: %s\n", event->name);
+							send_dir_to_server(server_socket, event->name, true);
+						} else {
+							printf("rm file: %s", event->name);
+							send_files_to_server(server_socket, event->name, true);
 						}
 					}
 
 					if (event->mask & IN_MOVE){
 						if (event->mask & IN_ISDIR){
-							printf("MOVE DIR WITH EVERYTHING SOMEWHERE\n");
+							//TODO
+							printf("MOVE DIR: %s \n", event->name);
 						}
 					}
 
@@ -145,6 +182,27 @@ static bool get_args(int argc, char *argv[], std::string* server_ip, int* port) 
 	return true;
 }
 
+void add_watch_recursive(int fd, const std::string& path) {
+    int wd = inotify_add_watch(fd, path.c_str(), IN_MODIFY | IN_CREATE | IN_DELETE | IN_MOVE | IN_CLOSE_WRITE);
+    if (wd == -1) {
+        perror("inotify_add_watch");
+        exit(EXIT_FAILURE);
+    }
+
+    // Recursively add watches for subdirectories
+    DIR* dir = opendir(path.c_str());
+    if (dir != nullptr) {
+        struct dirent* entry;
+        while ((entry = readdir(dir)) != nullptr) {
+            if (entry->d_type == DT_DIR && strcmp(entry->d_name, ".") != 0 && strcmp(entry->d_name, "..") != 0) {
+                std::string subPath = path + "/" + entry->d_name;
+                add_watch_recursive(fd, subPath);
+            }
+        }
+        closedir(dir);
+    }
+}
+
 int main(int argc, char* argv[]) {
 	std::string server_ip;
 	int port;
@@ -158,9 +216,6 @@ int main(int argc, char* argv[]) {
 			   perror("inotify_init1");
 			   exit(EXIT_FAILURE);
 		   }
-
-		   /* Allocate memory for watch descriptors */
-
 	
 	// Process command line arguments
 	if (!get_args(argc, argv, &server_ip, &port)) {
@@ -168,7 +223,7 @@ int main(int argc, char* argv[]) {
 		exit(EXIT_FAILURE);
 	}
 
-	inotify_add_watch(fd, client_dir.c_str(), IN_MODIFY | IN_CREATE | IN_DELETE | IN_MOVE | IN_CLOSE_WRITE);
+	add_watch_recursive(fd, client_dir.c_str());
 
 	std::cerr << "\n"
 			  << "Client's parameters are:\n\n"

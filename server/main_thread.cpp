@@ -54,7 +54,7 @@ static void process_task(Task& task) {
 		msg = "";
 		nread = 0;
 
-		while (nread < data.block_size) {
+		while (nread < 128) {
 			ch = reader.next();
 			if (reader.eof()) {
 				break;

@@ -91,7 +91,7 @@ static void process_directory(std::string& dirname, std::vector<std::string>& fi
 	call_or_exit(closedir(dp), "closedir (communication thread)");
 }
 
-static bool get_args(int argc, char *argv[], int* port, int* pool_size) {
+static bool get_args(int argc, char *argv[], int* port) {
 	ArgParser arg_parser(argc, argv);
 
 	if (!arg_parser.valid_args()) {
@@ -99,28 +99,21 @@ static bool get_args(int argc, char *argv[], int* port, int* pool_size) {
 	}
 
 	std::string port_ = arg_parser.get_argument(std::string("-p"));
-	std::string pool_size_ = arg_parser.get_argument(std::string("-s"));
-	std::string queue_size_ = arg_parser.get_argument(std::string("-q"));
-	std::string block_size_ = arg_parser.get_argument(std::string("-b"));
 
-	if (port_.empty() || pool_size_.empty() || queue_size_.empty() || block_size_.empty()) {
+	if (port_.empty()) {
 		return false;
 	}
 
 	*port = atoi(port_.c_str());
-	*pool_size = atoi(pool_size_.c_str());
-	data.task_capacity = atoi(queue_size_.c_str());
-	data.block_size = atoi(block_size_.c_str());
 
 	return true;
 }
 
 int main(int argc, char* argv[]) {
 	int port = 0;
-	int thread_pool_size = 0;
 
 	// Process command line arguments
-	if (!get_args(argc, argv, &port, &thread_pool_size)) {
+	if (!get_args(argc, argv, &port)) {
 		std::cerr << "Invalid program arguments\n";
 		exit(EXIT_FAILURE);
 	}
@@ -147,15 +140,6 @@ int main(int argc, char* argv[]) {
 	          << "Listening for connections to port " << port << "\n\n";
 
 	int status;
-	pthread_t thread_id;
-
-	for (int i = 0; i < thread_pool_size; i++) {
-		status = pthread_create(&thread_id, nullptr, worker_thread, nullptr);
-		pthread_call_or_exit(status, "pthread_create (worker)");
-
-		status = pthread_detach(thread_id);
-		pthread_call_or_exit(status, "pthread_detach (worker)");
-	}
 
 	int new_sock;
 	socklen_t client_size;
