@@ -8,11 +8,13 @@
 #include <sys/wait.h>
 #include <sys/types.h>
 #include <sys/epoll.h>
+#include <fstream>
 #include <arpa/inet.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <sys/stat.h>
 #include <fcntl.h>
+#include <filesystem>
 #include "threads.h"
 #include "arg_parser.h"
 #include "sys_utill.h"
@@ -23,7 +25,87 @@
 
 // Global state used by the communication & worker threads
 SharedData data;
+namespace fs = std::filesystem;
 
+std::string findFilePath(const std::string& fileName) {
+    for (const auto& entry : fs::recursive_directory_iterator("./")) {
+        if (entry.is_regular_file() && entry.path().filename() == fileName) {
+            return entry.path().string();
+        }
+    }
+    return ""; // File not found
+}
+
+static std::string read_message_from_client(int fd) {
+	Reader reader(fd);
+	int ch;
+	char c;
+	// read message type
+	read(fd, &c, 1);
+	std::string filename = "";
+	std::string filepath = "";
+	if (c == 'd') { // file to be deleted
+		while (true) {
+			ch = reader.next();
+			if (reader.eof()) {
+				break;
+			}
+			filename += (char) ch;
+		}
+		filepath = findFilePath(filename);
+		std::remove(filepath.c_str());
+		return "";
+	}
+	if (c == 'c') { // file to be created
+		while (true) {
+			ch = reader.next();
+			if (reader.eof()) {
+				break;
+			}
+			filename += (char) ch;
+		}
+
+		filepath = "./start_folder" + filename;
+		std::ofstream MyFile(filepath.c_str());
+		MyFile.close();
+		return "";
+	}
+	
+	read(fd, &filepath, sizeof(filepath));
+	
+	std::string msg_size = "";
+	// read message size
+	for (int i = 0; i < 4; i++) {
+		ch = reader.next();
+		msg_size += (char) ch;
+	}
+	
+	// read message 
+	int message_size = std::stoi(msg_size);
+	std::string message = "";
+	for (int i = 0; i < message_size; i++) {
+		ch = reader.next();
+		message += (char) ch;
+	}
+
+	return message;
+}
+
+static bool files_content_is_equal(std::string& client_message) {
+	int server_file = open("./start_folder/filename", O_RDONLY);
+	int file_size = lseek(server_file, 0L, SEEK_END);
+	lseek(server_file, 0, SEEK_SET);
+	std::string file_content = "";
+	read(server_file, &file_content[0], file_size);
+
+	std::string message = client_message;
+	int message_size = message.size();
+
+	if ((file_size != message_size) || file_content.compare(message) != 0)
+		return false;
+	
+	return true;		
+}
 static std::string read_dirname(Reader& reader) {
 	// Read the directory that the client wants to copy. The first 4 bytes
 	// are the payload's size in bytes (least significant byte comes first)
