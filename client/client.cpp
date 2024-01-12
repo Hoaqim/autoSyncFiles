@@ -39,21 +39,23 @@ void send_files_to_server(int server_socket, std::string filename, bool to_delet
 		std::string msg_size = "";
 		std::string msg = "";
 		if(to_delete) {
-			msg = filename + "deleted";
-			msg_size = sizeof(filename) + sizeof("deleted");
+			msg = 'd' + filename;
+			msg_size = filename.size() + 1;
 			write_(server_socket, msg.c_str(), msg.size());
 			return;
 		}
 
 		if(to_create){
-			msg = filename + "created";
-			msg_size = sizeof(filename) + sizeof("created");
+			msg = 'c' + filename;
+			msg_size = filename.size() + 1;
 			write_(server_socket, msg.c_str(), msg.size());
 			return;
 		}
 
+		std::string filepath = findFilePath(filename);
+		write_(server_socket, filepath.c_str(), filepath.size());
+
 		for (int ch, nread; true; ) {
-		
 		nread = 0;
 
 		while (nread < 128) {
@@ -73,22 +75,27 @@ void send_files_to_server(int server_socket, std::string filename, bool to_delet
 		for (int i = 0; i < 4; i++) {
 			msg_size += (char) (nread >> (i * 8)) & 0xFF;
 		}
-		
-		msg = msg_size + msg;
+		msg_size+=1;
+		msg = msg_size + 'u' + msg;
 
-		write_(server_socket, msg.c_str(), msg.size());
+		write_(server_socket, msg.c_str(), msg.size()+1);
 		}
 }
 
-void send_dir_to_server(int server_socket, std::string dir_name, bool to_delete=false){
+void send_dir_to_server(int server_socket, std::string dir_name, bool to_delete=false, bool to_create=false){
 	std::string msg = "", msg_size = "";
 	msg_size = dir_name.size();
 	
 	if(to_delete){
-		msg += "deleted";
-		msg_size += sizeof("deleted");
+		msg += 'd';
+		msg_size += 1;
 	};
 	
+	if(to_create){
+		msg+='c';
+		msg_size+=1;
+	}
+
 	msg = msg_size + dir_name;
 
 	write_(server_socket, msg.c_str(), msg.size());
@@ -124,7 +131,7 @@ void handle_events(int fd, int server_socket){
 				   event = (const struct inotify_event *) ptr;
 				   
 				   
-				   if ( event->mask & IN_MODIFY) {
+				   if ((event->mask & IN_CLOSE_WRITE)) {
 						printf("FILE MODIFIED: %s \n", event->name);
 						send_files_to_server(server_socket, event->name);
 				   }
