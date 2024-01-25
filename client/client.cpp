@@ -11,6 +11,7 @@
 #include <unistd.h>
 #include <utility>
 #include <vector>
+#include <algorithm>
 
 namespace fs = std::filesystem;
 

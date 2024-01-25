@@ -2,4 +2,4 @@
 
 .PHONY: client
 client: client.cpp
-	$(CXX) -c $< -o $@ $(CFLAGS)
+	$(CXX) $< -o $@ $(CFLAGS)

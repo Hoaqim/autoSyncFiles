@@ -2,4 +2,4 @@
 
 .PHONY: server
 server: server.cpp
-	$(CXX) -c $< -o $@ $(CFLAGS)
+	$(CXX) $< -o $@ $(CFLAGS)
