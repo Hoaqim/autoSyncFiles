@@ -14,6 +14,10 @@
 #include <algorithm>
 #include <fcntl.h>
 #include <limits.h>
+#include <sys/socket.h>
+#include <arpa/inet.h>
+#include <unistd.h>
+#include <sys/epoll.h>
 
 namespace fs = std::filesystem;
 constexpr int BUFFER_SIZE = 1024 + PATH_MAX;
@@ -40,10 +44,12 @@ private:
 
 public:
 	int fd;
+	int server_socket;
 
-	FileWatcher(std::string path) {
+	FileWatcher(std::string path, int server_sock) {
 		this->fd = inotify_init1(IN_NONBLOCK);
 		this->add(path);
+		this->server_socket = server_sock;
 	}
 
 	~FileWatcher() {
@@ -235,17 +241,66 @@ void sendMoveReqest(const fs::path& filePath, const fs::path& filePath2, int fd)
     write(fd, 0, 1);
 }
 
-int main() {
-	FileWatcher fw("./sync");
-	
-	pollfd pfd[1];
-	pfd[0].fd = fw.fd;
-	pfd[0].events = POLLIN;
-	while (poll(pfd, 1, -1)) {
-		if (pfd[0].events & POLLIN) {
-			fw.handle();
-		}
-	}
 
-	return 0;
+int main(int argc, char *argv[]) {
+
+    // Create a socket
+    int sock = socket(AF_INET, SOCK_STREAM, 0);
+    if (sock == -1) {
+        std::cerr << "Failed to create socket." << std::endl;
+        return 1;
+    }
+
+    // Specify the server address
+    sockaddr_in serverAddress;
+	serverAddress.sin_addr.s_addr = inet_addr(argv[1]);
+    serverAddress.sin_family = AF_INET;
+    serverAddress.sin_port = htons(atoi(argv[2])); // replace with your port
+
+    if (connect(sock, (struct sockaddr*)&serverAddress, sizeof(serverAddress)) < 0) {
+        std::cerr << "Failed to connect to server." << std::endl;
+        return 1;
+    }
+    FileWatcher fw("./sync", sock);
+
+    int epollFd = epoll_create1(0);
+    if (epollFd == -1) {
+        std::cerr << "Failed to create epoll file descriptor." << std::endl;
+        return 1;
+    }
+
+    epoll_event event;
+    event.events = EPOLLIN;
+    event.data.fd = fw.fd;
+    if (epoll_ctl(epollFd, EPOLL_CTL_ADD, fw.fd, &event) == -1) {
+        std::cerr << "Failed to add file descriptor to epoll." << std::endl;
+        return 1;
+    }
+
+    event.data.fd = sock;
+    if (epoll_ctl(epollFd, EPOLL_CTL_ADD, sock, &event) == -1) {
+        std::cerr << "Failed to add socket descriptor to epoll." << std::endl;
+        return 1;
+    }
+
+    while (true) {
+        epoll_event events[10];
+        int numEvents = epoll_wait(epollFd, events, 10, -1);
+        if (numEvents == -1) {
+            std::cerr << "epoll_wait failed." << std::endl;
+            return 1;
+        }
+
+        for (int i = 0; i < numEvents; i++) {
+            if (events[i].data.fd == fw.fd) {
+                fw.handle();
+            } else if (events[i].data.fd == sock) {
+                // handle server response here
+            }
+        }
+    }
+
+    close(sock);
+
+    return 0;
 }
