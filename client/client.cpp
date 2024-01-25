@@ -182,6 +182,56 @@ void receiveFilesFromServer() {
     std::cout << "Receiving files from server" << std::endl;
 }
 
+void sendModifyFileRequest(int fd, const fs::path& filePath) {
+    write(fd, "u", 1);
+    
+    write(fd, filePath.c_str(), sizeof(filePath));
+    write(fd, 0, 1);
+    
+    // Send file modification time
+    auto current_time = fs::last_write_time(filePath).time_since_epoch().count();
+    write(fd, &current_time, sizeof(current_time));
+    
+    // Send file size
+    auto file_size = (uint64_t)fs::file_size(filePath);
+    write(fd, &file_size, sizeof(uint64_t));
+    
+    // Send file content
+    int fileFd = open(filePath.c_str(), O_RDONLY);
+    
+    char buffer[1024];
+    ssize_t bytesRead;
+
+    while ((bytesRead = read(fileFd, buffer, BUFFER_SIZE)) > 0) {
+        write(fd, buffer, bytesRead);
+    }
+
+}
+
+void sendDeleteRequest(int fd, const fs::path& filePath) {
+    write(fd, "d", 1);   
+    
+    write(fd, filePath.c_str(), sizeof(filePath));
+    write(fd, 0, 1);
+}
+
+void sendCreateRequest(int fd, const fs::path& filePath) {
+    write(fd, "c", 1);
+    
+    write(fd, filePath.c_str(), sizeof(filePath));
+    write(fd, 0, 1);
+}
+
+void sendMoveReqest(const fs::path& filePath, const fs::path& filePath2, int fd) {
+    write(fd, "m", 1);
+    
+    write(fd, filePath.c_str(), sizeof(filePath));
+    write(fd, 0, 1);
+
+    write(fd, filePath2.c_str(), sizeof(filePath2));
+    write(fd, 0, 1);
+}
+
 int main() {
 	FileWatcher fw("./sync");
 	
