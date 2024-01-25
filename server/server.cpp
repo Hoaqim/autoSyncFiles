@@ -164,26 +164,32 @@ void receivePacketsFromClient(int client_sock){
     }
 
     if(operation=='u'){
-        lastModTime = (u_int64_t)buffer[i++]<<56;
-        lastModTime |= (u_int64_t)buffer[i++]<<48; 
-        lastModTime |= (u_int64_t)buffer[i++]<<40;
-        lastModTime |= (u_int64_t)buffer[i++]<<32;
-        lastModTime |= (u_int64_t)buffer[i++]<<24;
+        lastModTime = (u_int64_t)buffer[i++];
+        lastModTime |= (u_int64_t)buffer[i++]<<8; 
         lastModTime |= (u_int64_t)buffer[i++]<<16;
-        lastModTime |= (u_int64_t)buffer[i++]<<8;
-        lastModTime |= (u_int64_t)buffer[i++];
+        lastModTime |= (u_int64_t)buffer[i++]<<24;
+        lastModTime |= (u_int64_t)buffer[i++]<<32;
+        lastModTime |= (u_int64_t)buffer[i++]<<40;
+        lastModTime |= (u_int64_t)buffer[i++]<<48;
+        lastModTime |= (u_int64_t)buffer[i++]<<56;
 
-        contentSize = (u_int64_t)buffer[i++]<<56;
-        contentSize |= (u_int64_t)buffer[i++]<<48; 
-        contentSize |= (u_int64_t)buffer[i++]<<40;
-        contentSize |= (u_int64_t)buffer[i++]<<32;
-        contentSize |= (u_int64_t)buffer[i++]<<24;
+        contentSize = (u_int64_t)buffer[i++];
+        contentSize |= (u_int64_t)buffer[i++]<<8; 
         contentSize |= (u_int64_t)buffer[i++]<<16;
-        contentSize |= (u_int64_t)buffer[i++]<<8;
-        contentSize |= (u_int64_t)buffer[i++];
-
-        memcpy(filecontent.data(), buffer, sizeof(buffer)-i);
+        contentSize |= (u_int64_t)buffer[i++]<<24;
+        contentSize |= (u_int64_t)buffer[i++]<<32;
+        contentSize |= (u_int64_t)buffer[i++]<<40;
+        contentSize |= (u_int64_t)buffer[i++]<<48;
+        contentSize |= (u_int64_t)buffer[i++]<<56;
+        
+        if(!sizeof(buffer)-1>bytesRead){
+            memcpy(filecontent.data(), buffer, sizeof(buffer)-i);
+        } else {
+            memcpy(filecontent.data(), buffer, sizeof(bytesRead)-i);
+        }
+        std::cout<<"dup"<<std::endl;
         recv(client_sock, filecontent.data() + (sizeof(buffer)-1), contentSize-sizeof(buffer)-i, 0);
+        std::cout<<"dupa"<<std::endl;
 
         if(resolveConflict(lastModTime, fs::last_write_time(filepath).time_since_epoch().count())){
             sendResponse("Conflict detected.\n", client_sock);
