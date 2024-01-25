@@ -18,6 +18,21 @@ constexpr int BUFFER_SIZE = 1024 + PATH_MAX;
 
 namespace fs = std::filesystem;
 
+void sendFile(const std::string& filename, int cliSock) {
+    int fileFd = open(filename.c_str(), O_RDONLY);
+    
+    if (fileFd == -1) {
+        perror("File doesn't exist");
+        return;
+    }
+
+    char buffer[1024];
+    ssize_t bytesRead;
+
+    while ((bytesRead = read(fileFd, buffer, BUFFER_SIZE)) > 0) {
+        write(cliSock, buffer, bytesRead);
+    }
+}
 void sendResponse(const char* response, int clientSocket){
     ssize_t bytesSent = send(clientSocket, response, strlen(response), 0);
     if(bytesSent == -1){
