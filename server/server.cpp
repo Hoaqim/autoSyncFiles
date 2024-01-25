@@ -9,15 +9,22 @@
 #include <map>
 #include <cstdlib>
 #include <fstream>
-#include <filesystem>  
+#include <filesystem> 
+#include <linux/limits.h>
+
 
 constexpr int MAX_EVENTS = 10;
-constexpr int BUFFER_SIZE = 1024;
+constexpr int BUFFER_SIZE = 1024 + PATH_MAX;
 
 namespace fs = std::filesystem;
 
 void sendResponse(const char* response, int clientSocket){
     ssize_t bytesSent = send(clientSocket, response, strlen(response), 0);
+    if(bytesSent == -1){
+        std::cerr << "Failed to send response to client." << std::endl;
+        close(clientSocket);
+        return;
+    }
 }
 
 void createFileOnServer(std::string filepath, char *fileContent){
@@ -45,12 +52,12 @@ void deleteFileOnServer(std::string filepath){
     fs::remove_all(filepath);
 }
 
-void moveFileOnServer(){
-
+void moveFileOnServer(std::string oldFilePath, char *newFilePath){
+    fs::rename(oldFilePath, newFilePath);
 }
 
 
-void manageOperationSendFromClient(int operation, char *filepath, char *fileContent){
+void manageOperationSendFromClient(int operation, std::string filepath, char *fileContent, char *newFilePath=NULL){
     switch(operation){
         case 1:
             createFileOnServer(filepath, fileContent);
@@ -62,13 +69,42 @@ void manageOperationSendFromClient(int operation, char *filepath, char *fileCont
             deleteFileOnServer(filepath);
             break;
         case 4:
-            //moveFileOnServer(filepath, fileContent);
+            moveFileOnServer(filepath, newFilePath);
             break;
         default:
             std::cerr << "Unknown operation." << std::endl;
             break;
     }
 }
+
+int compareModifiedTimes(u_int64_t clientTime, u_int64_t serverTime){
+    if(clientTime > serverTime){
+        return 1;
+    } else if(clientTime < serverTime){
+        return -1;
+    } else {
+        return 0;
+    }
+}
+
+//0 -> no conflict 1 -> conflict
+int resolveConflict(u_int64_t clientTime, u_int64_t serverTime){
+    if(compareModifiedTimes(clientTime, serverTime)){
+        return 0;
+    }
+    
+    return 1;
+}
+
+void sendFileBack(int client_sock, std::string filepath, u_int64_t contentSize, char *fileContent){
+    ssize_t bytes_sent = (client_sock, fileContent, sizeof(contentSize), 0);
+    if(bytes_sent == -1){
+        std::cerr << "Failed to send file to client." << std::endl;
+        close(client_sock);
+        return;
+    }
+}
+
 
 void receivePacketsFromClient(int client_sock){
     std::cout << "Receiving files from client" << std::endl;
@@ -85,10 +121,42 @@ void receivePacketsFromClient(int client_sock){
         close(client_sock);
         return;
     }
-    //TODO compare files and recreate on srv
-    sendResponse("Files successfully received.", client_sock);
-    manageOperationSendFromClient(1, "test.txt", buffer);
-    sendResponse("File successfully recreated on server.", client_sock);
+
+    int i=1;
+    std::string filepath = "";
+    char *newFilePath[BUFFER_SIZE];
+    char operation = buffer[0];
+    u_int64_t contentSize;
+    char tab[contentSize]; 
+    char *fileContent;
+    u_int64_t lastModTime;
+
+    while(buffer[i] != '\0'){
+        filepath += buffer[i];
+        i++;
+    }
+
+    if (operation=='m'){
+        memcpy(newFilePath, buffer, sizeof(buffer)-i);
+    }
+
+    if(operation=='u'){
+        lastModTime = buffer[i++]<<56 | buffer[i++]<<48 | buffer[i++]<<40 | buffer[i++]<<32 | buffer[i++]<<24 | buffer[i++]<<16 | buffer[i++]<<8 | buffer[i++];
+        contentSize = buffer[i++]<<56 | buffer[i++]<<48 | buffer[i++]<<40 | buffer[i++]<<32 | buffer[i++]<<24 | buffer[i++]<<16 | buffer[i++]<<8 | buffer[i++];
+
+        memcpy(tab, buffer, sizeof(buffer)-i);
+        recv(client_sock, tab + (sizeof(buffer)-1), contentSize-sizeof(buffer)-i, 0);
+
+        if(resolveConflict(lastModTime, fs::last_write_time(filepath).time_since_epoch().count())){
+            sendResponse("Conflict detected.\n", client_sock);
+            sendFileBack(client_sock, filepath, contentSize, tab);
+            return;
+        }
+    }
+   
+    sendResponse("Files successfully received.\n", client_sock);
+    manageOperationSendFromClient(operation, filepath, tab);
+    sendResponse("File successfully recreated on server.\n", client_sock);
 }
 
 
