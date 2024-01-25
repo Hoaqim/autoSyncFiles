@@ -1,382 +1,141 @@
-#include <string>
-#include <cstdlib>
 #include <iostream>
-#include <netdb.h>
-#include <unistd.h>
-#include <pthread.h>
-#include <dirent.h>
-#include <sys/wait.h>
-#include <sys/types.h>
 #include <sys/epoll.h>
-#include <fstream>
-#include <arpa/inet.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
-#include <sys/stat.h>
+#include <unistd.h>
 #include <fcntl.h>
-#include <filesystem>
-#include "threads.h"
-#include "arg_parser.h"
-#include "sys_utill.h"
-#include "reader.h"
-#include "sys_utill.h"
+#include <cstring>
+#include <vector>
+#include <map>
+#include <fstream>
 
+std::map<std::string, std::string> files;
 
+constexpr int MAX_EVENTS = 10;
+constexpr int BUFFER_SIZE = 1024;
 
-// Global state used by the communication & worker threads
-SharedData data;
-namespace fs = std::filesystem;
+int main() {
+    int serverSocket = socket(AF_INET, SOCK_STREAM, 0);
+    if (serverSocket == -1) {
+        std::cerr << "Failed to create socket." << std::endl;
+        return 1;
+    }
 
-std::string findFilePath(const std::string& fileName) {
-    for (const auto& entry : fs::recursive_directory_iterator("./")) {
-        if (entry.is_regular_file() && entry.path().filename() == fileName) {
-            return entry.path().string();
+    // Set socket options to reuse address and enable non-blocking mode
+    int opt = 1;
+    if (setsockopt(serverSocket, SOL_SOCKET, SO_REUSEADDR | SO_REUSEPORT, &opt, sizeof(opt)) == -1) {
+        std::cerr << "Failed to set socket options." << std::endl;
+        close(serverSocket);
+        return 1;
+    }
+    fcntl(serverSocket, F_SETFL, O_NONBLOCK);
+
+    // Bind the socket to a specific address and port
+    sockaddr_in serverAddress{};
+    serverAddress.sin_family = AF_INET;
+    serverAddress.sin_addr.s_addr = INADDR_ANY;
+    serverAddress.sin_port = htons(8080); // Change the port number if needed
+
+    if (bind(serverSocket, reinterpret_cast<sockaddr*>(&serverAddress), sizeof(serverAddress)) == -1) {
+        std::cerr << "Failed to bind socket." << std::endl;
+        close(serverSocket);
+        return 1;
+    }
+
+    // Listen for incoming connections
+    if (listen(serverSocket, SOMAXCONN) == -1) {
+        std::cerr << "Failed to listen for connections." << std::endl;
+        close(serverSocket);
+        return 1;
+    }
+
+    // Create epoll instance
+    int epollFd = epoll_create1(0);
+    if (epollFd == -1) {
+        std::cerr << "Failed to create epoll instance." << std::endl;
+        close(serverSocket);
+        return 1;
+    }
+
+    // Add server socket to epoll
+    epoll_event event{};
+    event.events = EPOLLIN | EPOLLET;
+    event.data.fd = serverSocket;
+    if (epoll_ctl(epollFd, EPOLL_CTL_ADD, serverSocket, &event) == -1) {
+        std::cerr << "Failed to add server socket to epoll." << std::endl;
+        close(serverSocket);
+        close(epollFd);
+        return 1;
+    }
+
+    std::vector<epoll_event> events(MAX_EVENTS);
+
+    while (true) {
+        int numEvents = epoll_wait(epollFd, events.data(), MAX_EVENTS, -1);
+        if (numEvents == -1) {
+            std::cerr << "Failed to wait for events." << std::endl;
+            close(serverSocket);
+            close(epollFd);
+            return 1;
+        }
+
+        for (int i = 0; i < numEvents; ++i) {
+            if (events[i].data.fd == serverSocket) {
+                // Accept new connection
+                sockaddr_in clientAddress{};
+                socklen_t clientAddressLength = sizeof(clientAddress);
+                int clientSocket = accept(serverSocket, reinterpret_cast<sockaddr*>(&clientAddress),
+                                          &clientAddressLength);
+                if (clientSocket == -1) {
+                    std::cerr << "Failed to accept connection." << std::endl;
+                    continue;
+                }
+                fcntl(clientSocket, F_SETFL, O_NONBLOCK);
+
+                // Add client socket to epoll
+                event.events = EPOLLIN | EPOLLET;
+                event.data.fd = clientSocket;
+                if (epoll_ctl(epollFd, EPOLL_CTL_ADD, clientSocket, &event) == -1) {
+                    std::cerr << "Failed to add client socket to epoll." << std::endl;
+                    close(clientSocket);
+                    continue;
+                }
+
+                std::cout << "New client connected." << std::endl;
+            } else {
+                // Handle client data
+                int clientSocket = events[i].data.fd;
+                char buffer[BUFFER_SIZE];
+                memset(buffer, 0, sizeof(buffer));
+
+                ssize_t bytesRead = recv(clientSocket, buffer, sizeof(buffer), 0);
+                if (bytesRead == -1) {
+                    std::cerr << "Failed to receive data from client." << std::endl;
+                    close(clientSocket);
+                    continue;
+                } else if (bytesRead == 0) {
+                    // Client disconnected
+                    std::cout << "Client disconnected." << std::endl;
+                    close(clientSocket);
+                    continue;
+                }
+
+                std::cout << "Received data from client: " << buffer << std::endl;
+
+                const char* response = "Data received.";
+                ssize_t bytesSent = send(clientSocket, response, strlen(response), 0);
+                if (bytesSent == -1) {
+                    std::cerr << "Failed to send response to client." << std::endl;
+                    close(clientSocket);
+                    continue;
+                }
+            }
         }
     }
-    return ""; // File not found
-}
 
-static std::string read_message_from_client(int fd) {
-	Reader reader(fd);
-	int ch;
-	char c;
-	// read message type
-	read(fd, &c, 1);
-	std::string filename = "";
-	std::string filepath = "";
-	if (c == 'd') { // file to be deleted
-		while (true) {
-			ch = reader.next();
-			if (reader.eof()) {
-				break;
-			}
-			filename += (char) ch;
-		}
-		filepath = findFilePath(filename);
-		std::remove(filepath.c_str());
-		return "";
-	}
-	if (c == 'c') { // file to be created
-		while (true) {
-			ch = reader.next();
-			if (reader.eof()) {
-				break;
-			}
-			filename += (char) ch;
-		}
+    // Cleanup
+    close(serverSocket);
+    close(epollFd);
 
-		filepath = "./start_folder" + filename;
-		std::ofstream MyFile(filepath.c_str());
-		MyFile.close();
-		return "";
-	}
-	
-	read(fd, &filepath, sizeof(filepath));
-	
-	std::string msg_size = "";
-	// read message size
-	for (int i = 0; i < 4; i++) {
-		ch = reader.next();
-		msg_size += (char) ch;
-	}
-	
-	// read message 
-	int message_size = std::stoi(msg_size);
-	std::string message = "";
-	for (int i = 0; i < message_size; i++) {
-		ch = reader.next();
-		message += (char) ch;
-	}
-
-	return message;
-}
-
-static bool files_content_is_equal(std::string& client_message) {
-	int server_file = open("./start_folder/filename", O_RDONLY);
-	int file_size = lseek(server_file, 0L, SEEK_END);
-	lseek(server_file, 0, SEEK_SET);
-	std::string file_content = "";
-	read(server_file, &file_content[0], file_size);
-
-	std::string message = client_message;
-	int message_size = message.size();
-
-	if ((file_size != message_size) || file_content.compare(message) != 0)
-		return false;
-	
-	return true;		
-}
-static std::string read_dirname(Reader& reader) {
-	// Read the directory that the client wants to copy. The first 4 bytes
-	// are the payload's size in bytes (least significant byte comes first)
-
-	int nbytes = 0;
-	for (int byte, i = 0; i < 4; i++) {
-		byte = reader.next();
-		nbytes |= byte << (i * 8);
-	}
-
-	// Create the target directory path as per the client's request
-	std::string dirname(STARTDIR);
-	for (int i = 0; i < nbytes; i++) {
-		dirname += (char) reader.next();
-	}
-
-	// If the client selected the default directory, omit the "." in the path
-	if (dirname.back() == '.') {
-		dirname = std::string(STARTDIR);
-	}
-
-	// Add a trailing slash if it's not there (needed for process_directory)
-	if (dirname.back() != '/') {
-		dirname += '/';
-	}
-
-	return dirname;
-}
-
-static void process_directory(std::string& dirname, std::vector<std::string>& filenames) {
-	DIR* dp = opendir(dirname.c_str());
-
-	if (dp == nullptr) {
-		int status = pthread_mutex_lock(&data.log_mutex);
-		pthread_call_or_exit(status, "pthread_mutex_lock (log_mutex)");
-
-		std::cerr << "[Thread " << pthread_self()
-		          << "]: Failed to open directory: " << dirname << "\n\n";
-
-		status = pthread_mutex_unlock(&data.log_mutex);
-		pthread_call_or_exit(status, "pthread_mutex_unlock (log_mutex)");
-
-		return;
-	}
-
-	for (struct dirent* direntp; (direntp = readdir(dp)) != nullptr; ) {
-		std::string entry_name = direntp->d_name;
-
-		// Avoid current and parent directory entries so as to not create cycles
-		if (entry_name != "." && entry_name != "..") {
-			entry_name = dirname + entry_name;
-
-			struct stat st_buf;
-			call_or_exit(stat(entry_name.c_str(), &st_buf), "stat (communication thread)");
-
-			if (S_ISDIR(st_buf.st_mode)) {
-				entry_name += "/";
-				process_directory(entry_name, filenames);
-			} else {
-				filenames.push_back(entry_name);
-			}
-		}
-	}
-
-	call_or_exit(closedir(dp), "closedir (communication thread)");
-}
-
-static bool get_args(int argc, char *argv[], int* port) {
-	ArgParser arg_parser(argc, argv);
-
-	if (!arg_parser.valid_args()) {
-		return false;
-	}
-
-	std::string port_ = arg_parser.get_argument(std::string("-p"));
-
-	if (port_.empty()) {
-		return false;
-	}
-
-	*port = atoi(port_.c_str());
-
-	return true;
-}
-
-int main(int argc, char* argv[]) {
-	int port = 0;
-
-	// Process command line arguments
-	if (!get_args(argc, argv, &port)) {
-		std::cerr << "Invalid program arguments\n";
-		exit(EXIT_FAILURE);
-	}
-
-	pthread_mutex_init(&data.log_mutex, nullptr);
-	pthread_mutex_init(&data.queue_mutex, nullptr);
-	pthread_cond_init(&data.cond_nonfull, nullptr);
-	pthread_cond_init(&data.cond_nonempty, nullptr);
-
-	// Configure sockets to start serving clients
-	int sock;
-	call_or_exit(sock = socket(AF_INET, SOCK_STREAM, 0), "socket (server)");
-	
-	struct sockaddr_in server;
-
-	server.sin_family = AF_INET;
-	server.sin_addr.s_addr = htonl(INADDR_ANY);
-	server.sin_port = htons(port);
-
-	call_or_exit(bind(sock, (struct sockaddr *) &server, sizeof(server)), "bind (server)");
-	call_or_exit(listen(sock, 10), "listen (server)"); 
-
-	std::cerr << "Server was successfully initialized...\n"
-	          << "Listening for connections to port " << port << "\n\n";
-
-	int status;
-
-	int new_sock;
-	socklen_t client_size;
-	struct sockaddr_in client;
-	char client_ip[INET_ADDRSTRLEN];
-
-	int epoll_fd = epoll_create1(0);
-	epoll_event client_event;
-	client_event.events = EPOLLIN;
-	client_event.data.fd = sock;
-	epoll_ctl(epoll_fd, EPOLL_CTL_ADD, sock, &client_event);
-
-	while (true) {
-		int ew = epoll_wait(epoll_fd, &client_event, 1, -1);
-		
-		// Accept a new client
-		if (client_event.events == EPOLLIN && client_event.data.fd == sock) {
-			client_size = sizeof(client);
-			call_or_exit(
-				new_sock = accept(sock, (struct sockaddr *) &client, &client_size),
-				"accept (server)"
-			);
-
-			inet_ntop(AF_INET, &client.sin_addr, client_ip, INET_ADDRSTRLEN);
-
-			status = pthread_mutex_lock(&data.log_mutex);
-			pthread_call_or_exit(status, "pthread_mutex_lock (log_mutex)");
-
-			std::cerr << "[Thread " << pthread_self()
-					<< "]: Accepted connection from " << client_ip << "\n";
-
-			status = pthread_mutex_unlock(&data.log_mutex);
-			pthread_call_or_exit(status, "pthread_mutex_unlock (log_mutex)");
-
-			int* arg = new int(new_sock);
-			
-			// Add client's fd to set of descriptors moniotored by epoll
-			client_event.events = EPOLLIN;
-			client_event.data.fd = *arg;
-			epoll_ctl(epoll_fd, EPOLL_CTL_ADD, *(arg), &client_event);
-
-			// Let a communication thread handle the client (pass the socket fd to it)
-			//status = pthread_create(&thread_id, nullptr, communication_thread, arg);
-			//pthread_call_or_exit(status, "pthread_create (communication thread)");
-
-			//status = pthread_detach(thread_id);
-			//pthread_call_or_exit(status, "pthread_detach (communication thread)");
-		
-		// Handle client's request
-		} else {
-			int fd = client_event.data.fd;
-			Reader reader(fd);
-
-			// read directory that client wants to acquire
-			std::string dirname = read_dirname(reader);
-
-			int status = pthread_mutex_lock(&data.log_mutex);
-			pthread_call_or_exit(status, "pthread_mutex_lock (log_mutex)");
-
-			std::cerr << "[Thread " << pthread_self()
-					<< "]: About to scan directory " << dirname << "\n";
-
-			status = pthread_mutex_unlock(&data.log_mutex);
-			pthread_call_or_exit(status, "pthread_mutex_unlock (log_mutex)");
-
-			// Scan the target directory and add all file names in 'filenames'
-			std::vector<std::string> filenames; // All filenames under the directory
-			process_directory(dirname, filenames);
-
-			// Let the client know how many files he's about to receive
-			std::string msg = "";
-			for (int i = 0, n_files = filenames.size(); i < 4; i++) {
-				msg += (char) (n_files >> (i * 8)) & 0xFF;
-			}
-
-			call_or_exit(write_(fd, msg.c_str(), msg.size()), "write_ (communication thread)");
-			
-			// Create a lock for the client's socket
-			data.fd_to_mutex[fd] = new pthread_mutex_t();
-			pthread_mutex_init(data.fd_to_mutex[fd], nullptr);
-
-			// Send each file in directory
-			for (std::string filename : filenames) {
-				int file_fd;
-				file_fd = open(filename.c_str(), O_RDONLY);
-				Reader reader(file_fd);
-				int status = pthread_mutex_lock(&data.log_mutex);
-				pthread_call_or_exit(status, "pthread_mutex_lock (log_mutex");
-
-				std::cerr << "[Thread " << pthread_self()
-						<< "]: About to read file " << filename << "\n";
-
-				status = pthread_mutex_unlock(&data.log_mutex);
-				pthread_call_or_exit(status, "pthread_mutex_unlock (log_mutex");
-
-				struct stat st_buf;
-				call_or_exit(stat(filename.c_str(), &st_buf), "stat (worker thread)");
-
-				std::string msg;
-				int filename_size = filename.size();
-
-				// Create message: <file name size> <file name> <file size> (4 + n bytes + 4 bytes)
-				for (int i = 0; i < 4; i++) {
-					msg += (char) (filename_size >> (i * 8)) & 0xFF;
-				}
-
-				msg += filename;
-
-				for (int i = 0, size = st_buf.st_size; i < 4; i++) {
-					msg += (char) (size >> (i * 8)) & 0xFF;
-				}
-
-				call_or_exit(write_(fd, msg.c_str(), msg.size()), "write_ (worker thread)");
-
-				// Send file data as messages of the form: <payload size> <payload> (in blocks)
-				for (int ch, nread; true; ) {
-				msg = "";
-				nread = 0;
-
-				while (nread < data.block_size) {
-					ch = reader.next();
-					if (reader.eof()) {
-						break;
-					}
-
-					nread++;
-					msg += (char) ch;
-				}
-
-				if (nread == 0) {
-					break;
-				}
-
-				std::string msg_size = "";
-				for (int i = 0; i < 4; i++) {
-					msg_size += (char) (nread >> (i * 8)) & 0xFF;
-				}
-
-				msg = msg_size + msg;
-				call_or_exit(write_(fd, msg.c_str(), msg.size()), "write_ (worker thread)");
-				}
-
-				status = pthread_mutex_lock(&data.log_mutex);
-				pthread_call_or_exit(status, "pthread_mutex_lock (log_mutex");
-
-				std::cerr << "[Thread " << pthread_self()
-						<< "]: Transferred file " << filename << " successfully\n";
-
-				status = pthread_mutex_unlock(&data.log_mutex);
-				pthread_call_or_exit(status, "pthread_mutex_unlock (log_mutex");
-
-				call_or_exit(close(file_fd), "close file (worker)");
-			}
-		}
-	}
-
-	return 0;
+    return 0;
 }
