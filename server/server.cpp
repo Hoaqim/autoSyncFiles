@@ -7,14 +7,27 @@
 #include <cstring>
 #include <vector>
 #include <map>
-
+#include <cstdlib>
+#include <fstream>
 
 constexpr int MAX_EVENTS = 10;
 constexpr int BUFFER_SIZE = 1024;
 
-
 void sendResponse(const char* response, int clientSocket){
     ssize_t bytesSent = send(clientSocket, response, strlen(response), 0);
+}
+
+
+int recreateFileOnServer(std::string filename, char *fileContent){
+    std::ofstream file(filename);
+    if (!file.is_open()) {
+        std::cerr << "Failed to create file on server." << std::endl;
+        return -1;
+    }
+    file << fileContent;
+    file.close();
+
+    return 1;
 }
 
 void receiveFilesFromClient(int client_sock){
@@ -34,7 +47,10 @@ void receiveFilesFromClient(int client_sock){
     }
     //TODO compare files and recreate on srv
     sendResponse("Files successfully received.", client_sock);
+    recreateFileOnServer("test.txt", buffer);
+    sendResponse("File successfully recreated on server.", client_sock);
 }
+
 
 
 int main() {
