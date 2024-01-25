@@ -13,6 +13,7 @@
 #include <vector>
 #include <algorithm>
 #include <fcntl.h>
+#include <fstream>
 #include <limits.h>
 #include <sys/socket.h>
 #include <arpa/inet.h>
@@ -253,6 +254,55 @@ void sendMoveReqest(const fs::path& filePath, const fs::path& filePath2, int fd)
     write(fd,  &nullchar, 1);
 }
 
+void createFile(std::string filepath, char *fileContent){
+    std::ofstream file(filepath);
+    if (!file.is_open()) {
+        std::cerr << "Failed to create file on server." << std::endl;
+        return;
+    }
+    file << fileContent;
+    file.close();
+}
+
+
+void updateFile(std::string filepath, char *fileContent){
+    std::ofstream file(filepath);
+    if (!file.is_open()) {
+        std::cerr << "Failed to update file on server." << std::endl;
+        return;
+    }
+    file << fileContent;
+    file.close();
+}
+
+void deleteFile(std::string filepath){
+    fs::remove_all(filepath);
+}
+
+void moveFile(std::string oldFilePath, char *newFilePath){
+    fs::rename(oldFilePath, newFilePath);
+}
+
+
+void manageOperationSendFromClient(int operation, std::string filepath, char *fileContent, char *newFilePath=NULL){
+    switch(operation){
+        case 1:
+            createFile(filepath, fileContent);
+            break;
+        case 2:
+            updateFile(filepath, fileContent);
+            break;
+        case 3:
+            deleteFile(filepath);
+            break;
+        case 4:
+            moveFile(filepath, newFilePath);
+            break;
+        default:
+            std::cerr << "Unknown operation." << std::endl;
+            break;
+    }
+}
 
 int main(int argc, char *argv[]) {
 
