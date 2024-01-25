@@ -1,8 +1,170 @@
+#include <cerrno>
+#include <cstdio>
+#include <filesystem>
 #include <iostream>
-#include <fstream>
+#include <optional>
+#include <poll.h>
+#include <ostream>
 #include <string>
 #include <sys/inotify.h>
+#include <sys/poll.h>
 #include <unistd.h>
+#include <utility>
+#include <vector>
+
+namespace fs = std::filesystem;
+
+template<typename T> T try_or_exit(T result) {
+	if (result == -1) {
+		perror("Error");
+		exit(1);
+	}
+	return result;
+}
+
+template<typename T> T try_or_exit(T result, std::string message) {
+	if (result == -1) {
+		perror(message.c_str());
+		exit(1);
+	}
+	return result;
+}
+
+class FileWatcher {
+private:
+	std::vector<std::pair<int, fs::path>> watchlist;
+	std::optional<fs::path> lastMove;
+
+public:
+	int fd;
+
+	FileWatcher(std::string path) {
+		this->fd = inotify_init1(IN_NONBLOCK);
+		this->add(path);
+	}
+
+	~FileWatcher() {
+		for (auto const &[wd, _] : this->watchlist) {
+			inotify_rm_watch(this->fd, wd);
+		}
+		close(this->fd);
+	}
+
+	void add(fs::path path) {
+		std::cout << "[FW] Watching: " << path;
+		this->watchlist.push_back({
+			try_or_exit(inotify_add_watch(this->fd, path.c_str(), IN_CREATE | IN_CLOSE_WRITE | IN_MOVE | IN_DELETE), "inotify_add_watch"),
+			path
+		});
+		std::cout << " (" << this->watchlist.crbegin()->first << ")" << std::endl;
+
+		for (auto const& entry : fs::directory_iterator{path}) {
+			if (entry.is_directory()) {
+				this->add(entry.path());
+			}
+		}
+	}
+
+	void remove(fs::path path, bool move) {
+		for (auto it = this->watchlist.begin(); it != this->watchlist.end(); it++) {
+			if (std::mismatch(it->second.begin(), it->second.end(), path.begin(), path.end()).second == path.end()) { 
+				std::cout << "[FW] Removing: " << it->second << " (" << it->first << ")" << std::endl;
+				if (move) {
+					try_or_exit(inotify_rm_watch(this->fd, it->first), "inotify_rm_watch");
+				}
+				this->watchlist.erase(it);
+				break;
+			}
+		}
+	}
+
+	void handle() {
+		char buf[4096] __attribute__((aligned(alignof(inotify_event))));
+		inotify_event* event;
+
+		ssize_t len = read(this->fd, &buf, sizeof(buf));
+		if (len == -1) {
+			if (errno != EAGAIN) {
+				try_or_exit(len, "read");
+			}
+
+			return;
+		}
+
+		for (char* ptr = buf; ptr < buf + len; ptr += sizeof(inotify_event) + event->len) {
+			std::optional<fs::path> path;
+			event = (inotify_event*)ptr;
+
+			if (event->mask & IN_IGNORED) {
+				continue;
+			}
+
+			if (event->mask & IN_OPEN)
+				printf("[FW] IN_OPEN: ");
+			else if (event->mask & IN_CLOSE_NOWRITE)
+				printf("[FW] IN_CLOSE_NOWRITE: ");
+			else if (event->mask & IN_CLOSE_WRITE)
+				printf("[FW] IN_CLOSE_WRITE: ");
+			else if (event->mask & IN_CREATE)
+				printf("[FW] IN_CREATE: ");
+			else if (event->mask & IN_DELETE)
+				printf("[FW] IN_DELETE: ");
+			else if (event->mask & IN_MOVED_FROM)
+				printf("[FW] IN_MOVED_FROM: ");
+			else if (event->mask & IN_MOVED_TO)
+				printf("[FW] IN_MOVED_TO: ");
+			else
+				printf("[FW] UNKNOWN (%x): ", event->mask);
+
+			printf( "%i: ", event->wd );
+
+			for (auto const &[wd, ppath] : this->watchlist) {
+				if (event->wd == wd) {
+					path = ppath / event->name;
+					std::cout << *path; //std::format("{}{}", path.string(), std::string(event->name));
+					break;
+				}
+			}
+
+			if (!path) {
+				std::cout << std::endl;
+				std::cerr << "!!! Unknown watch descriptor: " << event->wd << std::endl;
+				continue;
+			}
+
+			if (event->mask & IN_ISDIR) {
+				std::cout << " [directory]" << std::endl;
+				if (event->mask & IN_CREATE) {
+					this->add(*path);
+				} else if (event->mask & IN_DELETE) {
+					this->remove(*path, false);
+					std::cout << "Delete: " << *path << std::endl;
+				}
+			} else {
+				std::cout << " [file]" << std::endl;
+				if (event->mask & IN_CLOSE_WRITE) {
+					std::cout << "Write: " << *path << std::endl;
+				} else if (event->mask & IN_DELETE) {
+					std::cout << "Delete: " << *path << std::endl;
+				}
+			}
+
+			if (event->mask & IN_MOVED_FROM) {
+				this->lastMove = path;
+			} else if (event->mask & IN_MOVED_TO) {
+				if (this->lastMove) {
+					std::cout << "Move: " << *this->lastMove << " -> " << *path << std::endl;
+					if (event->mask & IN_ISDIR) {
+						this->remove(*this->lastMove, true);
+						this->add(*path);
+					}
+				} else {
+					std::cerr << "!!! Unknown move: ??? -> " << *path << std::endl;
+				}
+			}
+		}
+	}
+};
 
 // Function to send a file to the server
 void sendFileToServer(const std::string& filePath) {
@@ -21,54 +183,16 @@ void receiveFilesFromServer() {
 }
 
 int main() {
-    // Set up inotify to monitor directory changes
-    int inotifyFd = inotify_init();
-    if (inotifyFd == -1) {
-        std::cerr << "Failed to initialize inotify" << std::endl;
-        return 1;
-    }
+	FileWatcher fw("./sync");
+	
+	pollfd pfd[1];
+	pfd[0].fd = fw.fd;
+	pfd[0].events = POLLIN;
+	while (poll(pfd, 1, -1)) {
+		if (pfd[0].events & POLLIN) {
+			fw.handle();
+		}
+	}
 
-    // Add the directory to monitor for changes
-    std::string directoryPath = "/path/to/directory";
-    int watchDescriptor = inotify_add_watch(inotifyFd, directoryPath.c_str(), IN_CREATE | IN_MODIFY | IN_DELETE | IN_MOVE);
-
-    if (watchDescriptor == -1) {
-        std::cerr << "Failed to add directory to inotify watch" << std::endl;
-        close(inotifyFd);
-        return 1;
-    }
-
-    // Continuously monitor for directory changes
-    char buffer[4096];
-    while (true) {
-        ssize_t bytesRead = read(inotifyFd, buffer, sizeof(buffer));
-        if (bytesRead == -1) {
-            std::cerr << "Failed to read inotify events" << std::endl;
-            close(inotifyFd);
-            return 1;
-        }
-
-        // Process the inotify events
-        for (char* p = buffer; p < buffer + bytesRead;) {
-            struct inotify_event* event = reinterpret_cast<struct inotify_event*>(p);
-
-            // Check if a file was modified, created, deleted, moved, or renamed
-            if (event->mask & (IN_MODIFY | IN_CREATE | IN_DELETE | IN_MOVE)) {
-                std::string fileName = event->name;
-                std::string filePath = directoryPath + "/" + fileName;
-
-                // Send the file to the server
-                sendFileToServer(filePath);
-            }
-
-            // Move to the next event in the buffer
-            p += sizeof(struct inotify_event) + event->len;
-        }
-    }
-
-    // Clean up
-    inotify_rm_watch(inotifyFd, watchDescriptor);
-    close(inotifyFd);
-
-    return 0;
+	return 0;
 }
