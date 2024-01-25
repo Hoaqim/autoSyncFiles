@@ -20,6 +20,9 @@
 #include <sys/epoll.h>
 
 namespace fs = std::filesystem;
+
+char nullchar = '\0';
+
 constexpr int BUFFER_SIZE = 1024 + PATH_MAX;
 template<typename T> T try_or_exit(T result) {
 	if (result == -1) {
@@ -36,6 +39,11 @@ template<typename T> T try_or_exit(T result, std::string message) {
 	}
 	return result;
 }
+
+void sendModifyFileRequest(int fd, const fs::path& filePath);
+void sendDeleteRequest(int fd, const fs::path& filePath);
+void sendCreateRequest(int fd, const fs::path& filePath);
+void sendMoveReqest(const fs::path& filePath, const fs::path& filePath2, int fd);
 
 class FileWatcher {
 private:
@@ -199,7 +207,7 @@ void sendModifyFileRequest(int fd, const fs::path& filePath) {
     write(fd, "u", 1);
     
     write(fd, filePath.c_str(), sizeof(filePath));
-    write(fd, 0, 1);
+    write(fd, &nullchar, 1);
     
     // Send file modification time
     auto current_time = fs::last_write_time(filePath).time_since_epoch().count();
@@ -212,7 +220,7 @@ void sendModifyFileRequest(int fd, const fs::path& filePath) {
     // Send file content
     int fileFd = open(filePath.c_str(), O_RDONLY);
     
-    char buffer[1024];
+    char buffer[BUFFER_SIZE];
     ssize_t bytesRead;
 
     while ((bytesRead = read(fileFd, buffer, BUFFER_SIZE)) > 0) {
@@ -225,29 +233,37 @@ void sendDeleteRequest(int fd, const fs::path& filePath) {
     write(fd, "d", 1);   
     
     write(fd, filePath.c_str(), sizeof(filePath));
-    write(fd, 0, 1);
+    write(fd,  &nullchar, 1);
 }
 
 void sendCreateRequest(int fd, const fs::path& filePath) {
     write(fd, "c", 1);
     
     write(fd, filePath.c_str(), sizeof(filePath));
-    write(fd, 0, 1);
+    write(fd,  &nullchar, 1);
 }
 
 void sendMoveReqest(const fs::path& filePath, const fs::path& filePath2, int fd) {
     write(fd, "m", 1);
     
     write(fd, filePath.c_str(), sizeof(filePath));
-    write(fd, 0, 1);
+    write(fd,  &nullchar, 1);
 
     write(fd, filePath2.c_str(), sizeof(filePath2));
-    write(fd, 0, 1);
+    write(fd,  &nullchar, 1);
 }
 
 
 int main(int argc, char *argv[]) {
 
+	if(argc < 2){
+		std::cout << "Usage: ./client <server_ip> <server_port>" << std::endl;
+		return 1;
+	}
+
+	// Create a directory if it does not exist
+	fs::create_directory("./sync");
+	
     // Create a socket
     int sock = socket(AF_INET, SOCK_STREAM, 0);
     if (sock == -1) {

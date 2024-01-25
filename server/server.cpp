@@ -29,7 +29,7 @@ void sendFile(const std::string& filename, int cliSock) {
         return;
     }
 
-    char buffer[1024];
+    char buffer[BUFFER_SIZE];
     ssize_t bytesRead;
 
     while ((bytesRead = read(fileFd, buffer, BUFFER_SIZE)) > 0) {
@@ -116,7 +116,9 @@ int resolveConflict(u_int64_t clientTime, u_int64_t serverTime){
 }
 
 void sendFileBack(int client_sock, std::string filepath, u_int64_t contentSize, char *fileContent){
-    ssize_t bytes_sent = (client_sock, fileContent, sizeof(contentSize), 0);
+    ssize_t bytes_sent = send(client_sock, fileContent, sizeof(contentSize), 0);
+    send(client_sock, filepath.c_str(), sizeof(filepath), 0);
+    
     if(bytes_sent == -1){
         std::cerr << "Failed to send file to client." << std::endl;
         close(client_sock);
@@ -149,8 +151,7 @@ void receivePacketsFromClient(int client_sock){
     char *newFilePath[BUFFER_SIZE];
     char operation = buffer[0];
     u_int64_t contentSize;
-    char tab[contentSize]; 
-    char *fileContent;
+    std::vector<char> filecontent; 
     u_int64_t lastModTime;
 
     while(buffer[i] != '\0'){
@@ -163,27 +164,46 @@ void receivePacketsFromClient(int client_sock){
     }
 
     if(operation=='u'){
-        lastModTime = (u_int64_t)buffer[i++]<<56 | (u_int64_t)buffer[i++]<<48 | (u_int64_t)buffer[i++]<<40 | (u_int64_t)buffer[i++]<<32 | (u_int64_t)buffer[i++]<<24 | (u_int64_t)buffer[i++]<<16 | (u_int64_t)buffer[i++]<<8 | (u_int64_t)buffer[i++];
-        contentSize = (u_int64_t)buffer[i++]<<56 | (u_int64_t)buffer[i++]<<48 | (u_int64_t)buffer[i++]<<40 | (u_int64_t)buffer[i++]<<32 | (u_int64_t)buffer[i++]<<24 | (u_int64_t)buffer[i++]<<16 | (u_int64_t)buffer[i++]<<8 | (u_int64_t)buffer[i++];
+        lastModTime = (u_int64_t)buffer[i++]<<56;
+        lastModTime |= (u_int64_t)buffer[i++]<<48; 
+        lastModTime |= (u_int64_t)buffer[i++]<<40;
+        lastModTime |= (u_int64_t)buffer[i++]<<32;
+        lastModTime |= (u_int64_t)buffer[i++]<<24;
+        lastModTime |= (u_int64_t)buffer[i++]<<16;
+        lastModTime |= (u_int64_t)buffer[i++]<<8;
+        lastModTime |= (u_int64_t)buffer[i++];
 
-        memcpy(tab, buffer, sizeof(buffer)-i);
-        recv(client_sock, tab + (sizeof(buffer)-1), contentSize-sizeof(buffer)-i, 0);
+        contentSize = (u_int64_t)buffer[i++]<<56;
+        contentSize |= (u_int64_t)buffer[i++]<<48; 
+        contentSize |= (u_int64_t)buffer[i++]<<40;
+        contentSize |= (u_int64_t)buffer[i++]<<32;
+        contentSize |= (u_int64_t)buffer[i++]<<24;
+        contentSize |= (u_int64_t)buffer[i++]<<16;
+        contentSize |= (u_int64_t)buffer[i++]<<8;
+        contentSize |= (u_int64_t)buffer[i++];
+
+        memcpy(filecontent.data(), buffer, sizeof(buffer)-i);
+        recv(client_sock, filecontent.data() + (sizeof(buffer)-1), contentSize-sizeof(buffer)-i, 0);
 
         if(resolveConflict(lastModTime, fs::last_write_time(filepath).time_since_epoch().count())){
             sendResponse("Conflict detected.\n", client_sock);
-            sendFileBack(client_sock, filepath, contentSize, tab);
+            sendFileBack(client_sock, filepath, contentSize, filecontent.data());
             return;
         }
 
     }
    
     sendResponse("Files successfully received.\n", client_sock);
-    manageOperationSendFromClient(operation, filepath, tab);
+    manageOperationSendFromClient(operation, filepath, filecontent.data());
     sendResponse("File successfully recreated on server.\n", client_sock);
 }
 
 
 int main(int argc, char *argv[]) {
+
+    if(argc < 2){
+        std::cerr << "Too few arguments. Give IP and port\n";
+    }
     int serverSocket = socket(AF_INET, SOCK_STREAM, 0);
     if (serverSocket == -1) {
         std::cerr << "Failed to create socket." << std::endl;
