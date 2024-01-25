@@ -12,9 +12,11 @@
 #include <utility>
 #include <vector>
 #include <algorithm>
+#include <fcntl.h>
+#include <limits.h>
 
 namespace fs = std::filesystem;
-
+constexpr int BUFFER_SIZE = 1024 + PATH_MAX;
 template<typename T> T try_or_exit(T result) {
 	if (result == -1) {
 		perror("Error");

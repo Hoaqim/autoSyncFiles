@@ -11,10 +11,13 @@
 #include <fstream>
 #include <filesystem> 
 #include <linux/limits.h>
-
+#include <arpa/inet.h>
+#include <algorithm>
 
 constexpr int MAX_EVENTS = 10;
 constexpr int BUFFER_SIZE = 1024 + PATH_MAX;
+
+std::vector<int> clientSockets;
 
 namespace fs = std::filesystem;
 
@@ -38,6 +41,7 @@ void sendResponse(const char* response, int clientSocket){
     if(bytesSent == -1){
         std::cerr << "Failed to send response to client." << std::endl;
         close(clientSocket);
+        clientSockets.erase(std::remove(clientSockets.begin(), clientSockets.end(), clientSocket), clientSockets.end());
         return;
     }
 }
@@ -116,6 +120,7 @@ void sendFileBack(int client_sock, std::string filepath, u_int64_t contentSize, 
     if(bytes_sent == -1){
         std::cerr << "Failed to send file to client." << std::endl;
         close(client_sock);
+        clientSockets.erase(std::remove(clientSockets.begin(), clientSockets.end(), client_sock), clientSockets.end());
         return;
     }
 }
@@ -130,10 +135,12 @@ void receivePacketsFromClient(int client_sock){
     if (bytesRead == -1) {
         std::cerr << "Failed to receive data from client." << std::endl;
         close(client_sock);
+        clientSockets.erase(std::remove(clientSockets.begin(), clientSockets.end(), client_sock), clientSockets.end());
         return;
     } else if (bytesRead == 0) {
         std::cout << "Client disconnected." << std::endl;
         close(client_sock);
+        clientSockets.erase(std::remove(clientSockets.begin(), clientSockets.end(), client_sock), clientSockets.end());
         return;
     }
 
@@ -156,8 +163,8 @@ void receivePacketsFromClient(int client_sock){
     }
 
     if(operation=='u'){
-        lastModTime = buffer[i++]<<56 | buffer[i++]<<48 | buffer[i++]<<40 | buffer[i++]<<32 | buffer[i++]<<24 | buffer[i++]<<16 | buffer[i++]<<8 | buffer[i++];
-        contentSize = buffer[i++]<<56 | buffer[i++]<<48 | buffer[i++]<<40 | buffer[i++]<<32 | buffer[i++]<<24 | buffer[i++]<<16 | buffer[i++]<<8 | buffer[i++];
+        lastModTime = (u_int64_t)buffer[i++]<<56 | (u_int64_t)buffer[i++]<<48 | (u_int64_t)buffer[i++]<<40 | (u_int64_t)buffer[i++]<<32 | (u_int64_t)buffer[i++]<<24 | (u_int64_t)buffer[i++]<<16 | (u_int64_t)buffer[i++]<<8 | (u_int64_t)buffer[i++];
+        contentSize = (u_int64_t)buffer[i++]<<56 | (u_int64_t)buffer[i++]<<48 | (u_int64_t)buffer[i++]<<40 | (u_int64_t)buffer[i++]<<32 | (u_int64_t)buffer[i++]<<24 | (u_int64_t)buffer[i++]<<16 | (u_int64_t)buffer[i++]<<8 | (u_int64_t)buffer[i++];
 
         memcpy(tab, buffer, sizeof(buffer)-i);
         recv(client_sock, tab + (sizeof(buffer)-1), contentSize-sizeof(buffer)-i, 0);
@@ -167,6 +174,7 @@ void receivePacketsFromClient(int client_sock){
             sendFileBack(client_sock, filepath, contentSize, tab);
             return;
         }
+
     }
    
     sendResponse("Files successfully received.\n", client_sock);
@@ -175,8 +183,7 @@ void receivePacketsFromClient(int client_sock){
 }
 
 
-
-int main() {
+int main(int argc, char *argv[]) {
     int serverSocket = socket(AF_INET, SOCK_STREAM, 0);
     if (serverSocket == -1) {
         std::cerr << "Failed to create socket." << std::endl;
@@ -193,8 +200,8 @@ int main() {
 
     sockaddr_in serverAddress{};
     serverAddress.sin_family = AF_INET;
-    serverAddress.sin_addr.s_addr = INADDR_ANY;
-    serverAddress.sin_port = htons(8080);
+    serverAddress.sin_addr.s_addr = inet_addr(argv[1]);
+    serverAddress.sin_port = htons(atoi(argv[2]));
 
     if (bind(serverSocket, reinterpret_cast<sockaddr*>(&serverAddress), sizeof(serverAddress)) == -1) {
         std::cerr << "Failed to bind socket." << std::endl;
@@ -255,7 +262,7 @@ int main() {
                     close(clientSocket);
                     continue;
                 }
-
+                clientSockets.push_back(clientSocket);
                 std::cout << "New client connected." << std::endl;
             } else {
                 int clientSocket = events[i].data.fd;
