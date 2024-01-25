@@ -9,28 +9,68 @@
 #include <map>
 #include <cstdlib>
 #include <fstream>
+#include <filesystem>  
 
 constexpr int MAX_EVENTS = 10;
 constexpr int BUFFER_SIZE = 1024;
+
+namespace fs = std::filesystem;
 
 void sendResponse(const char* response, int clientSocket){
     ssize_t bytesSent = send(clientSocket, response, strlen(response), 0);
 }
 
-
-int recreateFileOnServer(std::string filename, char *fileContent){
-    std::ofstream file(filename);
+void createFileOnServer(std::string filepath, char *fileContent){
+    std::ofstream file(filepath);
     if (!file.is_open()) {
         std::cerr << "Failed to create file on server." << std::endl;
-        return -1;
+        return;
     }
     file << fileContent;
     file.close();
-
-    return 1;
 }
 
-void receiveFilesFromClient(int client_sock){
+
+void updateFileOnServer(std::string filepath, char *fileContent){
+    std::ofstream file(filepath);
+    if (!file.is_open()) {
+        std::cerr << "Failed to update file on server." << std::endl;
+        return;
+    }
+    file << fileContent;
+    file.close();
+}
+
+void deleteFileOnServer(std::string filepath){
+    fs::remove_all(filepath);
+}
+
+void moveFileOnServer(){
+
+}
+
+
+void manageOperationSendFromClient(int operation, char *filepath, char *fileContent){
+    switch(operation){
+        case 1:
+            createFileOnServer(filepath, fileContent);
+            break;
+        case 2:
+            updateFileOnServer(filepath, fileContent);
+            break;
+        case 3:
+            deleteFileOnServer(filepath);
+            break;
+        case 4:
+            //moveFileOnServer(filepath, fileContent);
+            break;
+        default:
+            std::cerr << "Unknown operation." << std::endl;
+            break;
+    }
+}
+
+void receivePacketsFromClient(int client_sock){
     std::cout << "Receiving files from client" << std::endl;
     char buffer[BUFFER_SIZE];
     memset(buffer, 0, sizeof(buffer));
@@ -47,7 +87,7 @@ void receiveFilesFromClient(int client_sock){
     }
     //TODO compare files and recreate on srv
     sendResponse("Files successfully received.", client_sock);
-    recreateFileOnServer("test.txt", buffer);
+    manageOperationSendFromClient(1, "test.txt", buffer);
     sendResponse("File successfully recreated on server.", client_sock);
 }
 
@@ -139,7 +179,7 @@ int main() {
                 char buffer[BUFFER_SIZE];
                 memset(buffer, 0, sizeof(buffer));
 
-                receiveFilesFromClient(clientSocket);
+                receivePacketsFromClient(clientSocket);
             }
         }
     }
