@@ -1,5 +1,8 @@
 CXX ?= c++
-CFLAGS += -Wall -Wextra -pedantic
+CFLAGS += --std=c++23 -Wall -Wextra -pedantic
+ifeq ($(DEBUG),true)
+	CFLAGS += -g
+endif
 
 .DEFAULT_GOAL := all
 
