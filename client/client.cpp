@@ -145,16 +145,20 @@ public:
 				std::cout << " [directory]" << std::endl;
 				if (event->mask & IN_CREATE) {
 					this->add(*path);
+					sendCreateRequest(this->server_socket, *path);
 				} else if (event->mask & IN_DELETE) {
 					this->remove(*path, false);
 					std::cout << "Delete: " << *path << std::endl;
+					sendDeleteRequest(this->server_socket, *path);
 				}
 			} else {
 				std::cout << " [file]" << std::endl;
 				if (event->mask & IN_CLOSE_WRITE) {
 					std::cout << "Write: " << *path << std::endl;
+					sendModifyFileRequest(this->server_socket, *path);
 				} else if (event->mask & IN_DELETE) {
 					std::cout << "Delete: " << *path << std::endl;
+					sendDeleteRequest(this->server_socket, *path);
 				}
 			}
 
