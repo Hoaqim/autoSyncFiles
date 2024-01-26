@@ -184,14 +184,15 @@ void receivePacketsFromClient(int client_sock){
         
         memcpy(filecontent.data(), buffer, bytesRead-i);
         
-        std::cout<<"dup"<<std::endl;
         recv(client_sock, filecontent.data() + (sizeof(buffer)-1), contentSize-sizeof(buffer)-i, 0);
-        std::cout<<"dupa"<<std::endl;
 
-        if(resolveConflict(lastModTime, fs::last_write_time(filepath).time_since_epoch().count())){
-            sendResponse("Conflict detected.\n", client_sock);
-            sendFileBack(client_sock, filepath, contentSize, filecontent.data());
-            return;
+        if(fs::exists(filepath)){
+            auto serverLastModTime = fs::last_write_time(filepath).time_since_epoch().count();
+            if(resolveConflict(lastModTime, serverLastModTime)){
+                sendResponse("Conflict detected.\n", client_sock);
+                sendFileBack(client_sock, filepath, contentSize, filecontent.data());
+                return;
+            }
         }
 
     }
