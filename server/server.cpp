@@ -76,18 +76,18 @@ void moveFileOnServer(std::string oldFilePath, char *newFilePath){
 }
 
 
-void manageOperationSendFromClient(int operation, std::string filepath, char *fileContent, char *newFilePath=NULL){
+void manageOperationSendFromClient(char operation, std::string filepath, char *fileContent, char *newFilePath=NULL){
     switch(operation){
-        case 1:
+        case 'c':
             createFileOnServer(filepath, fileContent);
             break;
-        case 2:
+        case 'u':
             updateFileOnServer(filepath, fileContent);
             break;
-        case 3:
+        case 'd':
             deleteFileOnServer(filepath);
             break;
-        case 4:
+        case 'm':
             moveFileOnServer(filepath, newFilePath);
             break;
         default:
@@ -182,10 +182,11 @@ void receivePacketsFromClient(int client_sock){
         contentSize |= (u_int64_t)buffer[i++]<<48;
         contentSize |= (u_int64_t)buffer[i++]<<56;
         
+        //filecontent zapisuje sie jako operacja+filepath za glupi jestem zeby to zmienic na razie
         memcpy(filecontent.data(), buffer, bytesRead-i);
         
         recv(client_sock, filecontent.data() + (sizeof(buffer)-1), contentSize-sizeof(buffer)-i, 0);
-
+        std::cout<<operation << "\n filepath: "<< filepath << std::endl;
         if(fs::exists(filepath)){
             auto serverLastModTime = fs::last_write_time(filepath).time_since_epoch().count();
             if(resolveConflict(lastModTime, serverLastModTime)){
@@ -205,14 +206,20 @@ void receivePacketsFromClient(int client_sock){
 
 int main(int argc, char *argv[]) {
 
-    if(argc < 2){
-        std::cerr << "Too few arguments. Give IP and port\n";
+    if(argc < 1){
+        std::cerr << "Too few arguments. Give port\n";
     }
+
+
     int serverSocket = socket(AF_INET, SOCK_STREAM, 0);
     if (serverSocket == -1) {
         std::cerr << "Failed to create socket." << std::endl;
         return 1;
     }
+
+    if(!fs::exists("./sync")){
+        fs::create_directory("./sync");
+    }     
 
     int opt = 1;
     if (setsockopt(serverSocket, SOL_SOCKET, SO_REUSEADDR | SO_REUSEPORT, &opt, sizeof(opt)) == -1) {
@@ -224,7 +231,7 @@ int main(int argc, char *argv[]) {
 
     sockaddr_in serverAddress{};
     serverAddress.sin_family = AF_INET;
-    serverAddress.sin_addr.s_addr = inet_addr(argv[1]);
+    serverAddress.sin_addr.s_addr = INADDR_ANY;
     serverAddress.sin_port = htons(atoi(argv[2]));
 
     if (bind(serverSocket, reinterpret_cast<sockaddr*>(&serverAddress), sizeof(serverAddress)) == -1) {
