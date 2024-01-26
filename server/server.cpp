@@ -151,7 +151,7 @@ void receivePacketsFromClient(int client_sock){
     char *newFilePath[BUFFER_SIZE];
     char operation = buffer[0];
     u_int64_t contentSize;
-    std::vector<char> filecontent; 
+    std::vector<char> filecontent(bytesRead); 
     u_int64_t lastModTime;
 
     while(buffer[i] != '\0'){
@@ -160,7 +160,7 @@ void receivePacketsFromClient(int client_sock){
     }
 
     if (operation=='m'){
-        memcpy(newFilePath, buffer, sizeof(buffer)-i);
+        memcpy(newFilePath, buffer, sizeof(bytesRead)-i);
     }
 
     if(operation=='u'){
@@ -182,11 +182,8 @@ void receivePacketsFromClient(int client_sock){
         contentSize |= (u_int64_t)buffer[i++]<<48;
         contentSize |= (u_int64_t)buffer[i++]<<56;
         
-        if(!sizeof(buffer)-1>bytesRead){
-            memcpy(filecontent.data(), buffer, sizeof(buffer)-i);
-        } else {
-            memcpy(filecontent.data(), buffer, sizeof(bytesRead)-i);
-        }
+        memcpy(filecontent.data(), buffer, bytesRead-i);
+        
         std::cout<<"dup"<<std::endl;
         recv(client_sock, filecontent.data() + (sizeof(buffer)-1), contentSize-sizeof(buffer)-i, 0);
         std::cout<<"dupa"<<std::endl;
