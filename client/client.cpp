@@ -189,7 +189,7 @@ public:
 };
 
 // Function to send a file to the server
-void sendFileToServer(const std::string& filePath) {
+void sendFileToServer(const fs::path& filePath) {
     // Implement your logic to send the file to the server here
     // You can use networking libraries or APIs to send the file
     // to the server using a specific protocol (e.g., HTTP, FTP, etc.)
@@ -284,7 +284,7 @@ void moveFile(std::string oldFilePath, char *newFilePath){
 }
 
 
-void manageOperationSendFromClient(int operation, std::string filepath, char *fileContent, char *newFilePath=NULL){
+void manageOperationSendFromServer(int operation, std::string filepath, char *fileContent, char *newFilePath=NULL){
     switch(operation){
         case 1:
             createFile(filepath, fileContent);
@@ -302,6 +302,38 @@ void manageOperationSendFromClient(int operation, std::string filepath, char *fi
             std::cerr << "Unknown operation." << std::endl;
             break;
     }
+}
+
+
+void sendDirectory(int servSock, fs::path p) {
+	write(servSock, "u", 1); 
+	write(servSock, p.c_str(), sizeof(p));
+	write(servSock, &nullchar, 1);
+
+	// Send file modification time
+	auto current_time = fs::last_write_time(p).time_since_epoch().count();
+	write(servSock, &current_time, sizeof(current_time));
+	int zero = 0;
+	write(servSock, &zero, sizeof(int));
+	write(servSock, &nullchar, 1);
+}
+
+void sendDirectoryContent(int servSock) {
+	std::string path = "./sync";
+	for (auto &entry : fs::recursive_directory_iterator(path)) {
+		// if file - send filepath and its content
+		if (fs::is_regular_file(entry)) {
+			std::cout << "file" << std::endl;
+			sendModifyFileRequest(servSock, entry.path());
+		}
+		
+		// if directory - send dirpath
+		if (fs::is_directory(entry)) {
+			std::cout << "dir" << std::endl;
+			sendDirectory(servSock, entry.path());
+		}
+	}
+		
 }
 
 int main(int argc, char *argv[]) {
@@ -366,6 +398,7 @@ int main(int argc, char *argv[]) {
                 fw.handle();
             } else if (events[i].data.fd == sock) {
                 // handle server response here
+				
             }
         }
     }
