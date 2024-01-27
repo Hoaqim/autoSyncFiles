@@ -189,22 +189,6 @@ public:
 	}
 };
 
-// Function to send a file to the server
-void sendFileToServer(const fs::path& filePath) {
-    // Implement your logic to send the file to the server here
-    // You can use networking libraries or APIs to send the file
-    // to the server using a specific protocol (e.g., HTTP, FTP, etc.)
-    std::cout << "Sending file to server: " << filePath << std::endl;
-}
-
-// Function to receive files from the server
-void receiveFilesFromServer() {
-    // Implement your logic to receive files from the server here
-    // You can use networking libraries or APIs to receive files
-    // from the server using a specific protocol (e.g., HTTP, FTP, etc.)
-    std::cout << "Receiving files from server" << std::endl;
-}
-
 void sendModifyFileRequest(int fd, const fs::path& filePath) {
     write(fd, "u", 1);
     
