@@ -21,8 +21,6 @@ std::vector<int> clientSockets;
 
 namespace fs = std::filesystem;
 
-void sendPacketsToClients(char operation, fs::path filepath, char *fileConent, char **newFilePath);
-
 void sendFile(const std::string& filename, int cliSock) {
     int fileFd = open(filename.c_str(), O_RDONLY);
     
@@ -130,6 +128,47 @@ void sendFileBack(int client_sock, std::string filepath, u_int64_t contentSize, 
 }
 
 
+void sendPacketsToClients(int currClientSock, char operation, std::string filepath, char *fileConent, char **newFilePath=NULL){
+    char nullchar = '\0';
+
+    for(auto clientSocket : clientSockets){
+        
+        if(clientSocket == currClientSock){
+            continue;
+        }
+
+        send(clientSocket, &operation, sizeof(operation), 0);
+        send(clientSocket, filepath.c_str(), sizeof(filepath), 0);
+        send(clientSocket, &nullchar, sizeof(nullchar), 0);
+        
+        if(operation=='c' || operation=='u'){
+            send(clientSocket, fileConent, sizeof(fileConent), 0);
+        }
+        
+        if(operation=='m'){
+            send(clientSocket, newFilePath, sizeof(newFilePath), 0);
+        }
+        
+        if(operation=='u'){
+            u_int64_t lastModTime = fs::last_write_time(filepath).time_since_epoch().count();
+            send(clientSocket, &lastModTime, sizeof(lastModTime), 0);
+            u_int64_t contentSize = fs::file_size(filepath);
+            send(clientSocket, &contentSize, sizeof(contentSize), 0);
+            sendFile(filepath, clientSocket);
+        }
+    }
+}
+
+bool CreateDirectoryRecursive(std::string const &dirName){
+    if(!fs::create_directories(dirName)){
+        if(fs::exists(dirName)){
+            return true;
+        }
+        return false;
+    }
+    return true;
+}
+
 void receivePacketsFromClient(int client_sock){
     std::cout << "Receiving files from client" << std::endl;
     char buffer[BUFFER_SIZE];
@@ -160,6 +199,15 @@ void receivePacketsFromClient(int client_sock){
         filepath += buffer[i];
         i++;
     }
+
+    std::string dirRecursivePath = filepath.find('.') != std::string::npos ? filepath.substr(0, filepath.find_last_of('/')) : filepath;
+    std::cout<<dirRecursivePath<<std::endl;
+    if(!CreateDirectoryRecursive('.'+dirRecursivePath)){
+        std::cerr << "Failed to create directory on server." << std::endl;
+        sendResponse("Failed to create directory on server.\n", client_sock);
+        return;
+    }
+
 
     if (operation=='m'){
         memcpy(newFilePath, buffer, sizeof(bytesRead)-i);
@@ -203,38 +251,7 @@ void receivePacketsFromClient(int client_sock){
     sendResponse("Files successfully received.\n", client_sock);
     manageOperationSendFromClient(operation, filepath, filecontent.data());
     sendResponse("File successfully recreated on server.\n", client_sock);
-    sendPacketsToClients(operation, filepath, filecontent.data(), newFilePath);
-}
-
-void sendPacketsToClients(int currClientSock, char operation, fs::path filepath, char *fileConent, char **newFilePath=NULL){
-    char nullchar = '\0';
-
-    for(auto clientSocket : clientSockets){
-        
-        if(clientSocket == currClientSock){
-            continue;
-        }
-
-        send(clientSocket, &operation, sizeof(operation), 0);
-        send(clientSocket, filepath.c_str(), sizeof(filepath), 0);
-        send(clientSocket, &nullchar, sizeof(nullchar), 0);
-        
-        if(operation=='c' || operation=='u'){
-            send(clientSocket, fileConent, sizeof(fileConent), 0);
-        }
-        
-        if(operation=='m'){
-            send(clientSocket, newFilePath, sizeof(newFilePath), 0);
-        }
-        
-        if(operation=='u'){
-            u_int64_t lastModTime = fs::last_write_time(filepath).time_since_epoch().count();
-            send(clientSocket, &lastModTime, sizeof(lastModTime), 0);
-            u_int64_t contentSize = fs::file_size(filepath);
-            send(clientSocket, &contentSize, sizeof(contentSize), 0);
-            sendFile(filepath, clientSocket);
-        }
-    }
+    sendPacketsToClients(client_sock, operation, filepath, filecontent.data(), newFilePath);
 }
 
 int main(int argc, char *argv[]) {
