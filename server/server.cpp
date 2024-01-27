@@ -199,7 +199,7 @@ void receivePacketsFromClient(int client_sock){
         filepath += buffer[i];
         i++;
     }
-
+    std::cout<<filepath<<std::endl;
     std::string dirRecursivePath = filepath.find('.') != std::string::npos ? filepath.substr(0, filepath.find_last_of('/')) : filepath;
     std::cout<<dirRecursivePath<<std::endl;
     if(!CreateDirectoryRecursive('.'+dirRecursivePath)){
@@ -233,19 +233,20 @@ void receivePacketsFromClient(int client_sock){
         contentSize |= (u_int64_t)buffer[i++]<<56;
         
         //filecontent zapisuje sie jako operacja+filepath za glupi jestem zeby to zmienic na razie
-        memcpy(filecontent.data(), buffer, bytesRead-i);
-        
-        recv(client_sock, filecontent.data() + (sizeof(buffer)-1), contentSize-sizeof(buffer)-i, 0);
-        std::cout<<operation << "\n filepath: "<< filepath << std::endl;
-        if(fs::exists(filepath)){
-            auto serverLastModTime = fs::last_write_time(filepath).time_since_epoch().count();
-            if(resolveConflict(lastModTime, serverLastModTime)){
-                sendResponse("Conflict detected.\n", client_sock);
-                sendFileBack(client_sock, filepath, contentSize, filecontent.data());
-                return;
+        if(!contentSize == 0){
+            memcpy(filecontent.data(), buffer, bytesRead-i);
+            
+            recv(client_sock, filecontent.data() + (sizeof(buffer)-1), contentSize-sizeof(buffer)-i, 0);
+
+            if(fs::exists(filepath)){
+                auto serverLastModTime = fs::last_write_time(filepath).time_since_epoch().count();
+                if(resolveConflict(lastModTime, serverLastModTime)){
+                    sendResponse("Conflict detected.\n", client_sock);
+                    sendFileBack(client_sock, filepath, contentSize, filecontent.data());
+                    return;
+                }
             }
         }
-
     }
    
     sendResponse("Files successfully received.\n", client_sock);
@@ -257,7 +258,7 @@ void receivePacketsFromClient(int client_sock){
 int main(int argc, char *argv[]) {
 
     if(argc < 1){
-        std::cerr << "Too few arguments. Give port\n";
+        std::cerr << "Correct usage ./server <port>\n";
     }
 
 
@@ -282,7 +283,7 @@ int main(int argc, char *argv[]) {
     sockaddr_in serverAddress{};
     serverAddress.sin_family = AF_INET;
     serverAddress.sin_addr.s_addr = INADDR_ANY;
-    serverAddress.sin_port = htons(atoi(argv[2]));
+    serverAddress.sin_port = htons(atoi(argv[1]));
 
     if (bind(serverSocket, reinterpret_cast<sockaddr*>(&serverAddress), sizeof(serverAddress)) == -1) {
         std::cerr << "Failed to bind socket." << std::endl;
