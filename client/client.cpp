@@ -1,5 +1,6 @@
 #include <cerrno>
 #include <cstdio>
+#include <cstring>
 #include <filesystem>
 #include <iostream>
 #include <optional>
@@ -284,18 +285,18 @@ void moveFile(std::string oldFilePath, char *newFilePath){
 }
 
 
-void manageOperationSendFromServer(int operation, std::string filepath, char *fileContent, char *newFilePath=NULL){
+void manageOperationSendFromServer(char operation, std::string filepath, char *fileContent, char *newFilePath=NULL){
     switch(operation){
-        case 1:
+        case 'c':
             createFile(filepath, fileContent);
             break;
-        case 2:
+        case 'u':
             updateFile(filepath, fileContent);
             break;
-        case 3:
+        case 'd':
             deleteFile(filepath);
             break;
-        case 4:
+        case 'm':
             moveFile(filepath, newFilePath);
             break;
         default:
@@ -336,6 +337,70 @@ void sendDirectoryContent(int servSock) {
 		
 }
 
+void receivePacketsFromServer(int servSock){
+    std::cout << "Receiving files from server" << std::endl;
+    char buffer[BUFFER_SIZE];
+    memset(buffer, 0, sizeof(buffer));
+
+    ssize_t bytesRead = recv(servSock, buffer, sizeof(buffer), 0);
+    if (bytesRead == -1) {
+        std::cerr << "Failed to receive data from server." << std::endl;
+        close(servSock);
+        
+        return;
+    } else if (bytesRead == 0) {
+        std::cout << "No data from server" << std::endl;
+        close(servSock);
+        return;
+    }
+
+    int i=1;
+    std::string filepath = "";
+    char *newFilePath[BUFFER_SIZE];
+    char operation = buffer[0];
+    u_int64_t contentSize;
+    std::vector<char> filecontent(bytesRead); 
+    u_int64_t lastModTime;
+
+    while(buffer[i] != '\0'){
+        filepath += buffer[i];
+        i++;
+    }
+
+    if (operation=='m'){
+        memcpy(newFilePath, buffer, sizeof(bytesRead)-i);
+    }
+
+    if(operation=='u'){
+        lastModTime = (u_int64_t)buffer[i++];
+        lastModTime |= (u_int64_t)buffer[i++]<<8; 
+        lastModTime |= (u_int64_t)buffer[i++]<<16;
+        lastModTime |= (u_int64_t)buffer[i++]<<24;
+        lastModTime |= (u_int64_t)buffer[i++]<<32;
+        lastModTime |= (u_int64_t)buffer[i++]<<40;
+        lastModTime |= (u_int64_t)buffer[i++]<<48;
+        lastModTime |= (u_int64_t)buffer[i++]<<56;
+
+        contentSize = (u_int64_t)buffer[i++];
+        contentSize |= (u_int64_t)buffer[i++]<<8; 
+        contentSize |= (u_int64_t)buffer[i++]<<16;
+        contentSize |= (u_int64_t)buffer[i++]<<24;
+        contentSize |= (u_int64_t)buffer[i++]<<32;
+        contentSize |= (u_int64_t)buffer[i++]<<40;
+        contentSize |= (u_int64_t)buffer[i++]<<48;
+        contentSize |= (u_int64_t)buffer[i++]<<56;
+        
+        //filecontent zapisuje sie jako operacja+filepath za glupi jestem zeby to zmienic na razie
+        memcpy(filecontent.data(), buffer, bytesRead-i);
+        
+        recv(servSock, filecontent.data() + (sizeof(buffer)-1), contentSize-sizeof(buffer)-i, 0);
+        std::cout<<operation << "\n filepath: "<< filepath << std::endl;
+
+    }
+   
+    manageOperationSendFromServer(operation, filepath, filecontent.data());
+}
+
 int main(int argc, char *argv[]) {
 
 	if(argc < 2){
@@ -344,7 +409,9 @@ int main(int argc, char *argv[]) {
 	}
 
 	// Create a directory if it does not exist
-	fs::create_directory("./sync");
+	if (!fs::exists("./sync")) {
+		fs::create_directory("./sync");
+	}
 	
     // Create a socket
     int sock = socket(AF_INET, SOCK_STREAM, 0);
@@ -363,6 +430,10 @@ int main(int argc, char *argv[]) {
         std::cerr << "Failed to connect to server." << std::endl;
         return 1;
     }
+
+	// When connected, send ./sync directory content
+	sendDirectoryContent(sock);
+
     FileWatcher fw("./sync", sock);
 
     int epollFd = epoll_create1(0);
@@ -374,11 +445,13 @@ int main(int argc, char *argv[]) {
     epoll_event event;
     event.events = EPOLLIN;
     event.data.fd = fw.fd;
+	// Add file watcher fd to list of fds monitored by epoll
     if (epoll_ctl(epollFd, EPOLL_CTL_ADD, fw.fd, &event) == -1) {
         std::cerr << "Failed to add file descriptor to epoll." << std::endl;
         return 1;
     }
 
+	// Add server socket to list of fds monitored by epoll
     event.data.fd = sock;
     if (epoll_ctl(epollFd, EPOLL_CTL_ADD, sock, &event) == -1) {
         std::cerr << "Failed to add socket descriptor to epoll." << std::endl;
@@ -394,11 +467,14 @@ int main(int argc, char *argv[]) {
         }
 
         for (int i = 0; i < numEvents; i++) {
+			// Ready to read from file watcher fd
             if (events[i].data.fd == fw.fd) {
                 fw.handle();
+
+			// Ready to read from server socket
             } else if (events[i].data.fd == sock) {
                 // handle server response here
-				
+				receivePacketsFromServer(sock);
             }
         }
     }
