@@ -32,12 +32,15 @@ bool Socket::readData() {
 	this->readOffset += len;
 	for (int i = 1; i < this->readOffset; ++i) {
 		if (this->readBuf[i] == '\n' && this->readBuf[i - 1] == '\n') {
-			write(2, this->readBuf, ++i - 1);
+			write(2, this->readBuf, i);
 			this->readBuf[i] = 0;
-			
-			std::vector<char> cmd(this->readBuf, this->readBuf + i - 2);
+
+			std::vector<char> cmd(this->readBuf, this->readBuf + i - 1);
+
 			this->readOffset -= i;
-			memcpy(this->readBuf, this->readBuf + i, this->readOffset);
+			if (this->readOffset > 0) {
+				memmove(this->readBuf, this->readBuf + i, this->readOffset);
+			}
 			i = 0;
 
 			if (cmd.size() > 0) {
@@ -53,25 +56,23 @@ ssize_t Socket::readData(char* buf, ssize_t blen) {
 	ssize_t len = read(this->fd, this->readBuf + this->readOffset, sizeof(this->readBuf) - this->readOffset);
 	if (len == -1) {
 		if (errno != EAGAIN) {
-			return false;
+			return 0;
 		}
 
 		len = 0;
 	}
 
-	if (len == 0) {
-		return false;
+	if (len == 0 && this->readOffset == 0) {
+		return 0;
 	}
 
 	this->readOffset += len;
 	if (this->readOffset > 0) {
 		len = std::min(blen, this->readOffset);
-		memcpy(buf, this->readBuf, len);
+		memmove(buf - 1, this->readBuf, len);
 
 		this->readOffset -= len;
-		memcpy(this->readBuf, this->readBuf + len, this->readOffset);
-
-		return len;
+		memmove(this->readBuf, this->readBuf + len, this->readOffset);
 	}
 
 	return len;
@@ -108,7 +109,6 @@ void SyncDir::updateFile(std::string filepath, ssize_t mtime, ssize_t len, Socke
 			return;
 		}
 	}
-	std::cerr << "xd1" << std::endl;
 	std::ofstream file(base / filepath, std::ios::out | std::ios::trunc | std::ios::binary);
 	if (!file.is_open()) {
 		std::cerr << "Failed to update file \"" << filepath << "\"." << std::endl;
@@ -125,9 +125,7 @@ void SyncDir::updateFile(std::string filepath, ssize_t mtime, ssize_t len, Socke
 		}
 	}
 	file.close();
-	std::cerr << "pre post hook" << std::endl;
 	updateFilePostHook(filepath, mtime, len, source, buf);
-	std::cerr << "post post hook" << std::endl;
 }
 
 void SyncDir::moveFile(std::string oldFilepath, std::string newFilepath, Socket* source) {

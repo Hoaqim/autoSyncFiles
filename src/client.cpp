@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <cstdlib>
+#include <deque>
 #include <fcntl.h>
 #include <filesystem>
 #include <fstream>
@@ -17,9 +18,10 @@
 class Server : public Socket {
 public:
 	Server(int fd) : Socket(fd) {}
-
+	std::deque<std::string> lastSentFromServer;
 	void handle(std::vector<char> buf) override;
 };
+
 
 class Client : public SyncDir {
 	fs::path conflict;
@@ -55,42 +57,6 @@ public:
 };
 
 Client client("./sync", "./conflict");
-
-
-void Server::handle(std::vector<char> buf) {
-	std::cerr << "xd handler" << std::endl;
-	std::string rest(buf.data() + 1, buf.size() - 1);
-	switch (buf[0]) {
-	case 'e':
-		std::cerr << rest << std::endl;
-		break;
-	case 'u': {
-		std::istringstream iss(rest);
-		std::string filepath;
-		ssize_t len, mtime;
-		std::getline(iss, filepath);
-		iss >> mtime >> len;
-		client.updateFile(filepath, mtime, len, this);
-	} break;
-	case 'd': {
-		if (rest.size() > 0) {
-			client.deleteFile(rest, this);
-		}
-	} break;
-	case 'm': {
-		std::istringstream iss(rest);
-		std::string oldFilepath, newFilepath;
-		std::getline(iss, oldFilepath);
-		std::getline(iss, newFilepath);
-		if (oldFilepath.size() > 0 && newFilepath.size() > 0) {
-			client.moveFile(oldFilepath, newFilepath, this);
-		}
-	} break;
-	default:
-		std::cerr << "Unknown operation: " << buf[0] << std::endl;
-		break;
-	}
-}
 
 template<typename T> T try_or_exit(T result) {
 	if (result == -1) {
@@ -193,6 +159,26 @@ public:
 				continue;
 			}
 
+			bool end = false;
+			std::string target = path->string();
+			if (event->mask & IN_CLOSE_WRITE) {
+				target = "u" + target;
+			} else if (event->mask & IN_DELETE) {
+				target = "d" + target;
+			} else if (event->mask & IN_MOVED_TO) {
+				target = "m" + target;
+			} else if (!(event->mask & IN_MOVED_FROM)) {
+				continue;
+			}
+			for (auto it = this->server->lastSentFromServer.begin(); it != this->server->lastSentFromServer.end(); ++it) {
+				 if (*it == target) {
+					end = true;
+					this->server->lastSentFromServer.erase(it);
+					break;
+				}
+			}
+			if (end) continue;
+
 			std::ostringstream oss;
 			ssize_t mtime = fs::last_write_time(*path).time_since_epoch().count();
 			if (event->mask & IN_CLOSE_WRITE) {
@@ -256,6 +242,45 @@ public:
 	}
 };
 
+FileWatcher* fw;
+
+void Server::handle(std::vector<char> buf) {
+	std::string rest(buf.data() + 1, buf.size() - 1);
+	switch (buf[0]) {
+	case 'e':
+		std::cerr << rest << std::endl;
+		break;
+	case 'u': {
+		std::istringstream iss(rest);
+		std::string filepath;
+		ssize_t len, mtime;
+		std::getline(iss, filepath);
+		iss >> mtime >> len;
+		fw->server->lastSentFromServer.push_front("u" + fw->base + "/" + filepath);
+		client.updateFile(filepath, mtime, len, this);
+	} break;
+	case 'd': {
+		if (rest.size() > 0) {
+			client.deleteFile(rest, this);
+			fw->server->lastSentFromServer.push_front("d" + fw->base + "/" + rest);
+		}
+	} break;
+	case 'm': {
+		std::istringstream iss(rest);
+		std::string oldFilepath, newFilepath;
+		std::getline(iss, oldFilepath);
+		std::getline(iss, newFilepath);
+		if (oldFilepath.size() > 0 && newFilepath.size() > 0) {
+			client.moveFile(oldFilepath, newFilepath, this);
+			fw->server->lastSentFromServer.push_front("m" + fw->base + "/" + newFilepath);
+		}
+	} break;
+	default:
+		std::cerr << "Unknown operation: " << buf[0] << std::endl;
+		break;
+	}
+}
+
 int main(int argc, char *argv[]) {
 	if (argc < 3) {
 		std::cerr << "Usage: ./client <server_ip> <server_port>" << std::endl;
@@ -312,10 +337,10 @@ int main(int argc, char *argv[]) {
 	
 	// TODO: Presync
 
-	FileWatcher fw("sync", serverptr);
+	fw = new FileWatcher("sync", serverptr);
 
-	event.data.fd = fw.fd;
-	if (epoll_ctl(epollFd, EPOLL_CTL_ADD, fw.fd, &event) == -1) {
+	event.data.fd = fw->fd;
+	if (epoll_ctl(epollFd, EPOLL_CTL_ADD, fw->fd, &event) == -1) {
 		std::cerr << "Failed to add file watcher to epoll." << std::endl;
 		return 1;
 	}
@@ -332,8 +357,8 @@ int main(int argc, char *argv[]) {
 		}
 
 		for (int i = 0; i < numEvents; ++i) {
-			if (events[i].data.fd == fw.fd) {
-				fw.handle();
+			if (events[i].data.fd == fw->fd) {
+				fw->handle();
 			} else {
 				((Server*)events[i].data.ptr)->readData();
 			}

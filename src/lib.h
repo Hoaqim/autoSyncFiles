@@ -3,7 +3,7 @@
 #include <filesystem>
 
 constexpr int MAX_EVENTS = 10;
-constexpr int BUFFER_SIZE = 1024 + PATH_MAX;
+constexpr int BUFFER_SIZE = PATH_MAX;
 
 namespace fs = std::filesystem;
 
