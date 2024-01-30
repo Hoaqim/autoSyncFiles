@@ -12,7 +12,6 @@
 #include <arpa/inet.h>
 #include <sys/epoll.h>
 #include <sys/inotify.h>
-
 #include "lib.h"
 
 class Server : public Socket {
@@ -304,7 +303,8 @@ int main(int argc, char *argv[]) {
 	sockaddr_in serverAddress = {
 		.sin_family = AF_INET,
 		.sin_port = htons(atoi(argv[2])),
-		.sin_addr = { .s_addr = inet_addr(argv[1]) },
+		.sin_addr = {.s_addr = inet_addr(argv[1])},
+		.sin_zero = {0}
 	};
 
 	if (connect(

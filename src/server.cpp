@@ -3,7 +3,7 @@
 #include <unistd.h>
 #include <arpa/inet.h>
 #include <sys/epoll.h>
-
+#include <fcntl.h>
 #include "lib.h"
 
 class Client : public Socket {

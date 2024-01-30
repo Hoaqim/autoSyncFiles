@@ -1,6 +1,9 @@
 #pragma once
 #include <vector>
 #include <filesystem>
+#include <linux/limits.h>
+#include <cstring>
+#include <cstdio>
 
 constexpr int MAX_EVENTS = 10;
 constexpr int BUFFER_SIZE = PATH_MAX;
