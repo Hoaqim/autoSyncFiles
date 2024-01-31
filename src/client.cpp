@@ -43,7 +43,7 @@ public:
 		}
 		
 		std::vector<char> buf; // (len);
-		for (size_t j = 0; j < len; ++j){
+		for (ssize_t j = 0; j < len; ++j){
 			buf.push_back(0);
 		}
 		ssize_t i = 0;
@@ -353,6 +353,9 @@ int main(int argc, char *argv[]) {
 	while (true) {
 		int numEvents = epoll_wait(epollFd, events.data(), MAX_EVENTS, -1);
 		if (numEvents == -1) {
+			if (errno == EAGAIN || errno == EINTR) {
+				continue;
+			}
 			std::cerr << "Failed to wait for events." << std::endl;
 			close(sock);
 			close(epollFd);
