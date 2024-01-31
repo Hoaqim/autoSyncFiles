@@ -42,10 +42,13 @@ public:
 			std::cerr << "Failed to save conflict \"" << filepath << "\"" << std::endl;
 		}
 		
-		std::vector<char> buf(len);
+		std::vector<char> buf; // (len);
+		for (size_t j = 0; j < len; ++j){
+			buf.push_back(0);
+		}
 		ssize_t i = 0;
 		while (i < len) {
-			ssize_t rlen = source->readData(buf.data() + i, len);
+			ssize_t rlen = source->readData(buf.data() + i, len - 1);
 			if (rlen > 0) {
 				file.write(buf.data() + i, rlen);
 				i += rlen;
@@ -166,7 +169,7 @@ public:
 				target = "d" + target;
 			} else if (event->mask & IN_MOVED_TO) {
 				target = "m" + target;
-			} else if (!(event->mask & IN_MOVED_FROM)) {
+			} else if (!(event->mask & IN_MOVED_FROM) && (event->mask ^ (IN_DELETE | IN_MOVED_FROM)) == 0) {
 				continue;
 			}
 			for (auto it = this->server->lastSentFromServer.begin(); it != this->server->lastSentFromServer.end(); ++it) {
@@ -179,7 +182,7 @@ public:
 			if (end) continue;
 
 			std::ostringstream oss;
-			ssize_t mtime = fs::last_write_time(*path).time_since_epoch().count();
+			ssize_t mtime = (event->mask & (IN_DELETE | IN_MOVED_FROM)) ? 0 : fs::last_write_time(*path).time_since_epoch().count();
 			if (event->mask & IN_CLOSE_WRITE) {
 				std::cout << "[FW] IN_CLOSE_WRITE: " << event->wd
 					<< " [file]" << std::endl;

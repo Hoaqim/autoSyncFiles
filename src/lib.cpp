@@ -34,10 +34,17 @@ bool Socket::readData() {
 		if (this->readBuf[i] == '\n' && this->readBuf[i - 1] == '\n') {
 			write(2, this->readBuf, i);
 			this->readBuf[i] = 0;
+			this->readBuf[i - 1] = 0;
 
-			std::vector<char> cmd(this->readBuf, this->readBuf + i - 1);
+			std::vector<char> cmd;//(this->readBuf, this->readBuf + i - 1);
+			for (int j = 0; j < i - 1; ++j) {
+				cmd.push_back(this->readBuf[j]);
+			}
 
-			this->readOffset -= i;
+			this->readOffset -= ++i;
+			if (this->readOffset < 0) {
+				this->readOffset = 0;
+			}
 			if (this->readOffset > 0) {
 				memmove(this->readBuf, this->readBuf + i, this->readOffset);
 			}
@@ -69,7 +76,7 @@ ssize_t Socket::readData(char* buf, ssize_t blen) {
 	this->readOffset += len;
 	if (this->readOffset > 0) {
 		len = std::min(blen, this->readOffset);
-		memmove(buf - 1, this->readBuf, len);
+		memmove(buf, this->readBuf, len);
 
 		this->readOffset -= len;
 		memmove(this->readBuf, this->readBuf + len, this->readOffset);
@@ -109,23 +116,25 @@ void SyncDir::updateFile(std::string filepath, ssize_t mtime, ssize_t len, Socke
 			return;
 		}
 	}
+	CreateDirectoryRecursive((base / filepath).parent_path().string());
 	std::ofstream file(base / filepath, std::ios::out | std::ios::trunc | std::ios::binary);
 	if (!file.is_open()) {
 		std::cerr << "Failed to update file \"" << filepath << "\"." << std::endl;
 		return;
 	}
 
-	std::vector<char> buf(len);
+	char* buf = new char[len];
 	ssize_t i = 0;
-	while (i < len) {
-		ssize_t rlen = source->readData(buf.data() + i, len);
+	while (i < len - 1) {
+		ssize_t rlen = source->readData(buf + i, len - i);
 		if (rlen > 0) {
-			file.write(buf.data() + i, rlen);
+			file.write(buf + i, rlen);
 			i += rlen;
 		}
 	}
 	file.close();
 	updateFilePostHook(filepath, mtime, len, source, buf);
+	delete[] buf;
 }
 
 void SyncDir::moveFile(std::string oldFilepath, std::string newFilepath, Socket* source) {

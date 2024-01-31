@@ -54,11 +54,11 @@ public:
 		}
 	};
 
-	void updateFilePostHook(std::string filepath, ssize_t mtime, ssize_t len, Socket* source, std::vector<char> buf) override {
+	void updateFilePostHook(std::string filepath, ssize_t mtime, ssize_t len, Socket* source, char* buf) override {
 		std::ostringstream oss;
 		oss << "u" << filepath << '\n' << mtime << ' ' << len << "\n\n";
 		this->broadcastExcept(oss.str(), (Client*) source);
-		this->broadcastExcept(buf.data(), buf.size(), (Client*) source);
+		this->broadcastExcept(buf, len, (Client*) source);
 	}
 
 	void moveFilePostHook(std::string oldFilepath, std::string newFilepath, Socket* source) override {

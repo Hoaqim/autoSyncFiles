@@ -2,6 +2,7 @@
 #include <vector>
 #include <filesystem>
 #include <linux/limits.h>
+#include <algorithm>
 #include <cstring>
 #include <cstdio>
 
@@ -48,7 +49,7 @@ public:
 		[[maybe_unused]] ssize_t mtime,
 		[[maybe_unused]] ssize_t len,
 		[[maybe_unused]] Socket* source,
-		[[maybe_unused]] std::vector<char> buf
+		[[maybe_unused]] char* buf
 	) {}
 
 	void moveFile(std::string oldFilepath, std::string newFilepath, Socket* source);
