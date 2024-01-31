@@ -4,7 +4,10 @@
 #include <arpa/inet.h>
 #include <sys/epoll.h>
 #include <fcntl.h>
+#include <signal.h>
 #include "lib.h"
+
+int epollFd;
 
 class Client : public Socket {
 public:
@@ -29,6 +32,7 @@ public:
 			if (client != except && !(client->sendData(data, len))) {
 				std::cerr << "Failed to send file to client." << std::endl;
 				this->clientSockets.erase(std::remove(this->clientSockets.begin(), this->clientSockets.end(), client), this->clientSockets.end());
+				epoll_ctl(epollFd, EPOLL_CTL_DEL, client->fd, nullptr);
 				delete client;
 			}
 		}
@@ -49,6 +53,7 @@ public:
 			if (source->sendData(buffer, bytesRead)) {
 				std::cerr << "Failed to send file to client." << std::endl;
 				this->clientSockets.erase(std::remove(this->clientSockets.begin(), this->clientSockets.end(), source), this->clientSockets.end());
+				epoll_ctl(epollFd, EPOLL_CTL_DEL, source->fd, nullptr);
 				delete source;
 			}
 		}
@@ -153,7 +158,7 @@ int main(int argc, char *argv[]) {
 		return 1;
 	}
 
-	int epollFd = epoll_create1(0);
+	epollFd = epoll_create1(0);
 	if (epollFd == -1) {
 		std::cerr << "Failed to create epoll instance." << std::endl;
 		close(serverSocket);
@@ -161,7 +166,7 @@ int main(int argc, char *argv[]) {
 	}
 
 	epoll_event event{};
-	event.events = EPOLLIN | EPOLLET;
+	event.events = EPOLLIN | EPOLLET | EPOLLHUP;
 	event.data.fd = serverSocket;
 	if (epoll_ctl(epollFd, EPOLL_CTL_ADD, serverSocket, &event) == -1) {
 		std::cerr << "Failed to add server socket to epoll." << std::endl;
@@ -171,6 +176,8 @@ int main(int argc, char *argv[]) {
 	}
 
 	std::vector<epoll_event> events(MAX_EVENTS);
+
+	signal(SIGPIPE, SIG_IGN);
 
 	while (true) {
 		int numEvents = epoll_wait(epollFd, events.data(), MAX_EVENTS, -1);

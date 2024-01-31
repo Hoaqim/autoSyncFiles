@@ -2,10 +2,10 @@ CXX ?= c++
 CFLAGS += --std=c++23 -Wall -Wextra -pedantic
 TARGET_DIR ?= target
 ifeq ($(DEBUG),true)
-	CFLAGS += -g
+	CFLAGS += -gdwarf
 	REAL_TARGET_DIR := $(TARGET_DIR)/debug
 else
-#	CFLAGS += -O3
+	CFLAGS += -O3
 	REAL_TARGET_DIR := $(TARGET_DIR)/release
 endif
 SRC_DIR := src

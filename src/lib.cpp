@@ -1,3 +1,4 @@
+#include <cerrno>
 #include <fcntl.h>
 #include <fstream>
 #include <iostream>
@@ -88,7 +89,7 @@ ssize_t Socket::readData(char* buf, ssize_t blen) {
 bool Socket::sendData(const char* buf, ssize_t len) {
 	while (len > 0) {
 		ssize_t res = write(this->fd, buf, len);
-		if (len == 1) {
+		if (res == -1) {
 			if (errno == EAGAIN) {
 				continue;
 			}
